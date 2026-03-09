@@ -515,9 +515,12 @@ const Canvas = () => {
             fo.setCoords();
         }
       });
-      syncAllFills();
       applyZIndexOrdering(fabricCanvas);
     }
+    // FIX: Always sync fills so they follow parent paths during scrubbing/editing,
+    // not just during playback. This ensures painted fills (e.g., red stickman head)
+    // stay attached when moving objects to set up new keyframes.
+    syncAllFills();
     fabricCanvas.renderAll();
   }, [currentTime, keyframes, canvasObjects, fabricCanvas, isInteracting, selectedObject, isPlaying, drawingMode, fillToolActive]);
 
