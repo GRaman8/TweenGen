@@ -3,6 +3,7 @@ import { Box, Paper, Typography } from '@mui/material';
 import gsap from 'gsap';
 import { useCanvasObjects, useKeyframes, useDuration, useFabricCanvas, useCanvasBgColor } from '../../store/hooks';
 import { normalizeKeyframeRotations, findSurroundingKeyframes } from '../../utils/interpolation';
+import { SVG_SHAPE_KEYS } from '../../utils/shapeDefinitions';
 import { CANVAS_WIDTH, CANVAS_HEIGHT } from '../Canvas/Canvas';
 
 const fabricPathToSVGPath = (pathArray) => {
@@ -14,46 +15,32 @@ const fabricPathToSVGPath = (pathArray) => {
 
 const getDefaultFillColor = (type) => {
   switch (type) {
-    case 'rectangle': return '#3b82f6';
+    case 'rectangle': case 'roundedRect': return '#3b82f6';
     case 'circle': return '#ef4444';
+    case 'ellipse': return '#a855f7';
     case 'text': return '#000000';
     default: return '#000000';
   }
 };
 
-/**
- * Find the global z-swap point for a specific time segment (prev.time → curr.time)
- * by scanning ALL objects' normalized keyframes. If any object whose z-index changes
- * in an overlapping segment has a custom zSwapPoint, that value is used for everyone.
- */
 const findGlobalZSwapForSegment = (allNormalizedKfs, prevTime, currTime) => {
   const midTime = (prevTime + currTime) / 2;
   let globalSwap = null;
-
   for (const [objId, objKfs] of Object.entries(allNormalizedKfs)) {
     if (!objKfs || objKfs.length < 2) continue;
     const { before, after } = findSurroundingKeyframes(objKfs, midTime);
     if (!before || !after || before === after) continue;
-
     const beforeZ = before.properties.zIndex ?? 0;
     const afterZ = after.properties.zIndex ?? 0;
     if (beforeZ === afterZ) continue;
-
     if (after.zSwapPoint !== undefined && after.zSwapPoint !== null) {
-      if (globalSwap === null) {
-        globalSwap = after.zSwapPoint;
-      } else {
-        globalSwap = Math.min(globalSwap, after.zSwapPoint);
-      }
+      if (globalSwap === null) globalSwap = after.zSwapPoint;
+      else globalSwap = Math.min(globalSwap, after.zSwapPoint);
     }
   }
   return globalSwap ?? 0.5;
 };
 
-/**
- * Adds a discrete z-index set at the global swap point between two keyframes.
- * Only adds a tween if z-index actually changes.
- */
 const addZSwapTween = (timeline, element, prev, curr, globalSwapPoint) => {
   const prevZ = prev.properties.zIndex ?? 0;
   const currZ = curr.properties.zIndex ?? 0;
@@ -83,7 +70,6 @@ const LivePreview = () => {
       if (obj.type === 'group' && obj.children) obj.children.forEach(childId => groupChildren.add(childId));
     });
 
-    // Pre-compute all normalized keyframes for global swap point lookups
     const allNormalizedKfs = {};
     canvasObjects.forEach(obj => {
       if (groupChildren.has(obj.id)) return;
@@ -99,11 +85,136 @@ const LivePreview = () => {
 
       if (obj.type === 'group') renderGroup(obj, objKfs, allNormalizedKfs);
       else if (obj.type === 'path') renderPath(obj, objKfs, allNormalizedKfs);
+      else if (obj.type === 'image') renderImage(obj, objKfs, allNormalizedKfs);
+      else if (SVG_SHAPE_KEYS.has(obj.type)) renderSvgShape(obj, objKfs, allNormalizedKfs);
       else renderRegular(obj, objKfs, allNormalizedKfs);
     });
 
     return () => { if (timelineRef.current) timelineRef.current.kill(); };
   }, [canvasObjects, keyframes, duration, fabricCanvas, canvasBgColor]);
+
+  // Helper for animating keyframes (shared by multiple renderers)
+  const animateElement = (el, objKfs, allNormalizedKfs, anchorX, anchorY, ew, eh) => {
+    const timeline = timelineRef.current;
+    for (let i = 1; i < objKfs.length; i++) {
+      const prev = objKfs[i - 1], curr = objKfs[i];
+      const globalSwap = findGlobalZSwapForSegment(allNormalizedKfs, prev.time, curr.time);
+      timeline.to(el, {
+        duration: curr.time - prev.time,
+        left: (curr.properties.x - anchorX * ew) + 'px',
+        top: (curr.properties.y - anchorY * eh) + 'px',
+        scaleX: curr.properties.scaleX, scaleY: curr.properties.scaleY,
+        rotation: curr.properties.rotation, opacity: curr.properties.opacity,
+        ease: curr.easing || 'none',
+      }, prev.time);
+      addZSwapTween(timeline, el, prev, curr, globalSwap);
+    }
+  };
+
+  // ===== SVG SHAPES (triangle, diamond, pentagon, hexagon, star, arrow, heart, cross) =====
+  const renderSvgShape = (obj, objKfs, allNormalizedKfs) => {
+    const container = containerRef.current;
+    if (objKfs.length === 0) return;
+    const firstKf = objKfs[0];
+    const anchorX = obj.anchorX ?? 0.5, anchorY = obj.anchorY ?? 0.5;
+    const ew = 100, eh = 100;
+    const fillColor = obj.fill || '#000000';
+
+    const wrapper = document.createElement('div');
+    wrapper.id = obj.id;
+    wrapper.style.position = 'absolute';
+    wrapper.style.width = ew + 'px';
+    wrapper.style.height = eh + 'px';
+    wrapper.style.transformOrigin = `${anchorX * 100}% ${anchorY * 100}%`;
+    wrapper.style.zIndex = (firstKf.properties.zIndex ?? 0).toString();
+    wrapper.style.left = (firstKf.properties.x - anchorX * ew) + 'px';
+    wrapper.style.top = (firstKf.properties.y - anchorY * eh) + 'px';
+
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 100 100');
+    svg.setAttribute('width', '100%');
+    svg.setAttribute('height', '100%');
+    svg.style.display = 'block';
+    const pathEl = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    pathEl.setAttribute('d', obj.svgPath || '');
+    pathEl.setAttribute('fill', fillColor);
+    svg.appendChild(pathEl);
+    wrapper.appendChild(svg);
+    container.appendChild(wrapper);
+
+    gsap.set(wrapper, {
+      scaleX: firstKf.properties.scaleX, scaleY: firstKf.properties.scaleY,
+      rotation: firstKf.properties.rotation, opacity: firstKf.properties.opacity,
+    });
+
+    animateElement(wrapper, objKfs, allNormalizedKfs, anchorX, anchorY, ew, eh);
+  };
+
+  // ===== CSS SHAPES (rectangle, circle, ellipse, roundedRect, text) =====
+  const renderRegular = (obj, objKfs, allNormalizedKfs) => {
+    const container = containerRef.current;
+    if (objKfs.length === 0) return;
+    const firstKf = objKfs[0];
+    const anchorX = obj.anchorX ?? 0.5, anchorY = obj.anchorY ?? 0.5;
+    const fillColor = obj.fill || getDefaultFillColor(obj.type);
+
+    let ew = 100, eh = 100;
+    const el = document.createElement('div');
+    el.id = obj.id; el.style.position = 'absolute';
+
+    if (obj.type === 'rectangle') {
+      el.style.width = ew + 'px'; el.style.height = eh + 'px'; el.style.backgroundColor = fillColor;
+    } else if (obj.type === 'circle') {
+      el.style.width = ew + 'px'; el.style.height = eh + 'px'; el.style.borderRadius = '50%'; el.style.backgroundColor = fillColor;
+    } else if (obj.type === 'roundedRect') {
+      el.style.width = ew + 'px'; el.style.height = eh + 'px'; el.style.borderRadius = '16px'; el.style.backgroundColor = fillColor;
+    } else if (obj.type === 'ellipse') {
+      eh = 76; // rx=50, ry=38 → 100x76
+      el.style.width = ew + 'px'; el.style.height = eh + 'px'; el.style.borderRadius = '50%'; el.style.backgroundColor = fillColor;
+    } else if (obj.type === 'text') {
+      const fo = fabricCanvas?.getObjects().find(o => o.id === obj.id);
+      el.textContent = fo?.text || obj.textContent || 'Text'; el.style.fontSize = '24px'; el.style.color = fillColor; el.style.whiteSpace = 'nowrap';
+    }
+
+    el.style.transformOrigin = `${anchorX * 100}% ${anchorY * 100}%`;
+    el.style.zIndex = (firstKf.properties.zIndex ?? 0).toString();
+    el.style.left = (firstKf.properties.x - anchorX * ew) + 'px';
+    el.style.top = (firstKf.properties.y - anchorY * eh) + 'px';
+    container.appendChild(el);
+
+    gsap.set(el, {
+      scaleX: firstKf.properties.scaleX, scaleY: firstKf.properties.scaleY,
+      rotation: firstKf.properties.rotation, opacity: firstKf.properties.opacity,
+    });
+
+    animateElement(el, objKfs, allNormalizedKfs, anchorX, anchorY, ew, eh);
+  };
+
+  // ===== IMAGE =====
+  const renderImage = (obj, objKfs, allNormalizedKfs) => {
+    const container = containerRef.current;
+    if (objKfs.length === 0) return;
+    const firstKf = objKfs[0];
+    const anchorX = obj.anchorX ?? 0.5, anchorY = obj.anchorY ?? 0.5;
+    const ew = obj.imageWidth || 100, eh = obj.imageHeight || 100;
+
+    const el = document.createElement('img');
+    el.id = obj.id; el.src = obj.imageDataURL;
+    el.style.position = 'absolute'; el.style.width = ew + 'px'; el.style.height = eh + 'px';
+    el.style.transformOrigin = `${anchorX * 100}% ${anchorY * 100}%`;
+    el.style.zIndex = (firstKf.properties.zIndex ?? 0).toString();
+    el.style.pointerEvents = 'none';
+    el.style.left = (firstKf.properties.x - anchorX * ew) + 'px';
+    el.style.top = (firstKf.properties.y - anchorY * eh) + 'px';
+    container.appendChild(el);
+
+    gsap.set(el, {
+      scaleX: firstKf.properties.scaleX, scaleY: firstKf.properties.scaleY,
+      rotation: firstKf.properties.rotation, opacity: firstKf.properties.opacity,
+    });
+
+    animateElement(el, objKfs, allNormalizedKfs, anchorX, anchorY, ew, eh);
+  };
 
   // ===== GROUP =====
   const renderGroup = (obj, objKfs, allNormalizedKfs) => {
@@ -113,12 +224,9 @@ const LivePreview = () => {
     if (!fabricGroup) return;
     const firstKf = objKfs[0];
     const groupEl = document.createElement('div');
-    groupEl.id = obj.id;
-    groupEl.style.position = 'absolute';
-    groupEl.style.left = firstKf.properties.x + 'px';
-    groupEl.style.top = firstKf.properties.y + 'px';
-    groupEl.style.width = '0px'; groupEl.style.height = '0px';
-    groupEl.style.overflow = 'visible';
+    groupEl.id = obj.id; groupEl.style.position = 'absolute';
+    groupEl.style.left = firstKf.properties.x + 'px'; groupEl.style.top = firstKf.properties.y + 'px';
+    groupEl.style.width = '0px'; groupEl.style.height = '0px'; groupEl.style.overflow = 'visible';
     groupEl.style.zIndex = (firstKf.properties.zIndex ?? 0).toString();
     groupEl.style.transformOrigin = '0px 0px';
     container.appendChild(groupEl);
@@ -138,8 +246,7 @@ const LivePreview = () => {
       timeline.to(groupEl, {
         duration: curr.time - prev.time, left: curr.properties.x + 'px', top: curr.properties.y + 'px',
         scaleX: curr.properties.scaleX, scaleY: curr.properties.scaleY,
-        rotation: curr.properties.rotation, opacity: curr.properties.opacity,
-        ease: curr.easing || 'none',
+        rotation: curr.properties.rotation, opacity: curr.properties.opacity, ease: curr.easing || 'none',
       }, prev.time);
       addZSwapTween(timeline, groupEl, prev, curr, globalSwap);
     }
@@ -156,10 +263,8 @@ const LivePreview = () => {
     const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     g.setAttribute('transform', `translate(${relLeft - poX * scaleX}, ${relTop - poY * scaleY}) scale(${scaleX}, ${scaleY})`);
     const pathEl = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    pathEl.setAttribute('d', pathString);
-    pathEl.setAttribute('stroke', fc.stroke || '#000000');
-    pathEl.setAttribute('stroke-width', fc.strokeWidth || 3);
-    pathEl.setAttribute('fill', 'none');
+    pathEl.setAttribute('d', pathString); pathEl.setAttribute('stroke', fc.stroke || '#000000');
+    pathEl.setAttribute('stroke-width', fc.strokeWidth || 3); pathEl.setAttribute('fill', 'none');
     pathEl.setAttribute('stroke-linecap', 'round'); pathEl.setAttribute('stroke-linejoin', 'round');
     g.appendChild(pathEl); svg.appendChild(g); parentEl.appendChild(svg);
   };
@@ -185,21 +290,18 @@ const LivePreview = () => {
     parentEl.appendChild(el);
   };
 
-  // ===== STANDALONE PATH (with embedded fills) =====
+  // ===== PATH (freehand drawings with embedded fills) =====
   const renderPath = (obj, objKfs, allNormalizedKfs) => {
     const container = containerRef.current;
     const timeline = timelineRef.current;
     if (objKfs.length === 0) return;
     const fo = fabricCanvas?.getObjects().find(o => o.id === obj.id);
     const firstKf = objKfs[0];
-
     const pathOffsetX = fo?.pathOffset?.x || firstKf.properties.pathOffsetX || 0;
     const pathOffsetY = fo?.pathOffset?.y || firstKf.properties.pathOffsetY || 0;
     const width = fo?.width || firstKf.properties.width || obj.width || 0;
     const height = fo?.height || firstKf.properties.height || obj.height || 0;
-    const anchorX = obj.anchorX ?? 0.5;
-    const anchorY = obj.anchorY ?? 0.5;
-
+    const anchorX = obj.anchorX ?? 0.5, anchorY = obj.anchorY ?? 0.5;
     const transX = pathOffsetX + (anchorX - 0.5) * width;
     const transY = pathOffsetY + (anchorY - 0.5) * height;
 
@@ -214,16 +316,10 @@ const LivePreview = () => {
       obj.fills.forEach(fill => {
         const adjustedLeft = fill.relLeft - (anchorX - 0.5) * width;
         const adjustedTop = fill.relTop - (anchorY - 0.5) * height;
-
-        const img = document.createElement('img');
-        img.src = fill.dataURL;
-        img.style.position = 'absolute';
-        img.style.left = adjustedLeft + 'px';
-        img.style.top = adjustedTop + 'px';
-        img.style.width = fill.width + 'px';
-        img.style.height = fill.height + 'px';
-        img.style.pointerEvents = 'none';
-        img.style.imageRendering = 'pixelated';
+        const img = document.createElement('img'); img.src = fill.dataURL;
+        img.style.position = 'absolute'; img.style.left = adjustedLeft + 'px'; img.style.top = adjustedTop + 'px';
+        img.style.width = fill.width + 'px'; img.style.height = fill.height + 'px';
+        img.style.pointerEvents = 'none'; img.style.imageRendering = 'pixelated';
         wrapper.appendChild(img);
       });
     }
@@ -237,10 +333,10 @@ const LivePreview = () => {
     const pathEl = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     pathEl.setAttribute('d', fabricPathToSVGPath(obj.pathData));
     pathEl.setAttribute('stroke', obj.strokeColor || '#000000');
-    pathEl.setAttribute('stroke-width', obj.strokeWidth || 3);
-    pathEl.setAttribute('fill', 'none');
+    pathEl.setAttribute('stroke-width', obj.strokeWidth || 3); pathEl.setAttribute('fill', 'none');
     pathEl.setAttribute('stroke-linecap', 'round'); pathEl.setAttribute('stroke-linejoin', 'round');
     g.appendChild(pathEl); svg.appendChild(g); wrapper.appendChild(svg); container.appendChild(wrapper);
+
     gsap.set(wrapper, { scaleX: firstKf.properties.scaleX, scaleY: firstKf.properties.scaleY,
       rotation: firstKf.properties.rotation, opacity: firstKf.properties.opacity });
     for (let i = 1; i < objKfs.length; i++) {
@@ -249,48 +345,9 @@ const LivePreview = () => {
       timeline.to(wrapper, {
         duration: curr.time - prev.time, left: curr.properties.x + 'px', top: curr.properties.y + 'px',
         scaleX: curr.properties.scaleX, scaleY: curr.properties.scaleY,
-        rotation: curr.properties.rotation, opacity: curr.properties.opacity,
-        ease: curr.easing || 'none',
+        rotation: curr.properties.rotation, opacity: curr.properties.opacity, ease: curr.easing || 'none',
       }, prev.time);
       addZSwapTween(timeline, wrapper, prev, curr, globalSwap);
-    }
-  };
-
-  // ===== REGULAR (rect, circle, text) =====
-  const renderRegular = (obj, objKfs, allNormalizedKfs) => {
-    const container = containerRef.current;
-    const timeline = timelineRef.current;
-    if (objKfs.length === 0) return;
-    const firstKf = objKfs[0];
-    const anchorX = obj.anchorX ?? 0.5, anchorY = obj.anchorY ?? 0.5;
-    const ew = 100, eh = 100;
-    const fillColor = obj.fill || getDefaultFillColor(obj.type);
-    const el = document.createElement('div');
-    el.id = obj.id; el.style.position = 'absolute';
-    el.style.transformOrigin = `${anchorX * 100}% ${anchorY * 100}%`;
-    el.style.zIndex = (firstKf.properties.zIndex ?? 0).toString();
-    if (obj.type === 'rectangle') { el.style.width = ew + 'px'; el.style.height = eh + 'px'; el.style.backgroundColor = fillColor; }
-    else if (obj.type === 'circle') { el.style.width = ew + 'px'; el.style.height = eh + 'px'; el.style.borderRadius = '50%'; el.style.backgroundColor = fillColor; }
-    else if (obj.type === 'text') {
-      const fo = fabricCanvas?.getObjects().find(o => o.id === obj.id);
-      el.textContent = fo?.text || obj.textContent || 'Text'; el.style.fontSize = '24px'; el.style.color = fillColor; el.style.whiteSpace = 'nowrap';
-    }
-    el.style.left = (firstKf.properties.x - anchorX * ew) + 'px';
-    el.style.top = (firstKf.properties.y - anchorY * eh) + 'px';
-    container.appendChild(el);
-    gsap.set(el, { scaleX: firstKf.properties.scaleX, scaleY: firstKf.properties.scaleY,
-      rotation: firstKf.properties.rotation, opacity: firstKf.properties.opacity });
-    for (let i = 1; i < objKfs.length; i++) {
-      const prev = objKfs[i - 1], curr = objKfs[i];
-      const globalSwap = findGlobalZSwapForSegment(allNormalizedKfs, prev.time, curr.time);
-      timeline.to(el, {
-        duration: curr.time - prev.time,
-        left: (curr.properties.x - anchorX * ew) + 'px', top: (curr.properties.y - anchorY * eh) + 'px',
-        scaleX: curr.properties.scaleX, scaleY: curr.properties.scaleY,
-        rotation: curr.properties.rotation, opacity: curr.properties.opacity,
-        ease: curr.easing || 'none',
-      }, prev.time);
-      addZSwapTween(timeline, el, prev, curr, globalSwap);
     }
   };
 

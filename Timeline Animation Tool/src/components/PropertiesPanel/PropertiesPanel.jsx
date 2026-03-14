@@ -9,6 +9,13 @@ import {
 } from '../../store/hooks';
 import { findFabricObjectById, extractPropertiesFromFabricObject } from '../../utils/fabricHelpers';
 
+// All types that have a fill/color property (not paths, groups, or images)
+const FILL_TYPES = new Set([
+  'rectangle', 'circle', 'roundedRect', 'ellipse',
+  'triangle', 'diamond', 'pentagon', 'hexagon',
+  'star', 'arrow', 'heart', 'cross', 'text',
+]);
+
 const PropertiesPanel = () => {
   const [selectedObject] = useSelectedObject();
   const [properties, setProperties] = useSelectedObjectProperties();
@@ -87,17 +94,14 @@ const PropertiesPanel = () => {
     setCanvasObjects(prev => prev.map(obj => obj.id === selectedObject ? { ...obj, strokeColor: e.target.value } : obj));
   };
 
-  // Clear all embedded fills from a path
   const handleClearFills = () => {
     if (!selectedObject || !fabricCanvas) return;
     const objData = canvasObjects.find(obj => obj.id === selectedObject);
     if (!objData?.fills?.length) return;
-    // Remove fill images from fabric canvas
     const fillIds = new Set(objData.fills.map(f => f.id));
     fabricCanvas.getObjects().filter(o => o._isFill && fillIds.has(o.id))
       .forEach(fillImg => fabricCanvas.remove(fillImg));
     fabricCanvas.renderAll();
-    // Clear fills array on the path object
     setCanvasObjects(prev => prev.map(obj =>
       obj.id === selectedObject ? { ...obj, fills: [] } : obj
     ));
@@ -119,7 +123,7 @@ const PropertiesPanel = () => {
     return fo?.stroke || objectData?.strokeColor || '#000000';
   };
 
-  const isSolidShape = objectData && ['rectangle', 'circle', 'text'].includes(objectData.type);
+  const isSolidShape = objectData && FILL_TYPES.has(objectData.type);
   const isPath = objectData?.type === 'path';
   const pathFills = objectData?.fills || [];
 
@@ -132,14 +136,12 @@ const PropertiesPanel = () => {
           {fillToolActive ? 'Paint Bucket' : drawingMode ? 'Drawing Tool' : anchorEditMode ? 'Anchor Point' : 'Properties'}
         </Typography>
 
-        {/* ===== PAINT BUCKET MODE ===== */}
         {fillToolActive ? (
           <Box>
             <Paper variant="outlined" sx={{ p: 2, mb: 2, bgcolor: 'info.light', color: 'info.contrastText' }}>
               <Typography variant="body2" fontWeight={600}>🪣 Paint Bucket Tool</Typography>
               <Typography variant="caption">Click on any enclosed region to fill it with color — just like MS Paint!</Typography>
             </Paper>
-
             <Box sx={{ mb: 2 }}>
               <Typography variant="body2" fontWeight={600} gutterBottom>Fill Color</Typography>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -148,7 +150,6 @@ const PropertiesPanel = () => {
                 <Typography variant="caption" color="text.secondary">{fillToolColor}</Typography>
               </Box>
             </Box>
-
             <Paper variant="outlined" sx={{ p: 2, bgcolor: 'grey.50' }}>
               <Typography variant="body2" sx={{ lineHeight: 1.6 }}>
                 💡 <strong>How to use:</strong>
@@ -223,7 +224,6 @@ const PropertiesPanel = () => {
                     valueLabelFormat={(v) => `${(v * 100).toFixed(0)}%`} />
                 </Box>
 
-                {/* Fill color for solid shapes */}
                 {isSolidShape && (
                   <>
                     <Divider />
@@ -238,7 +238,6 @@ const PropertiesPanel = () => {
                   </>
                 )}
 
-                {/* Stroke color + embedded fills for path objects */}
                 {isPath && (
                   <>
                     <Divider />
@@ -250,27 +249,19 @@ const PropertiesPanel = () => {
                         <Typography variant="caption" color="text.secondary">{getCurrentStrokeColor()}</Typography>
                       </Box>
                     </Box>
-
-                    {/* Show embedded fills */}
                     {pathFills.length > 0 && (
                       <Box>
-                        <Typography variant="body2" gutterBottom fontWeight={600}>
-                          🪣 Fills ({pathFills.length})
-                        </Typography>
+                        <Typography variant="body2" gutterBottom fontWeight={600}>🪣 Fills ({pathFills.length})</Typography>
                         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 1 }}>
                           {pathFills.map((fill, i) => (
-                            <Box key={fill.id || i} sx={{
-                              width: 28, height: 28, bgcolor: fill.color,
-                              border: '2px solid', borderColor: 'grey.400', borderRadius: 0.5,
-                            }} title={`${fill.color} — ${fill.width}×${fill.height}px`} />
+                            <Box key={fill.id || i} sx={{ width: 28, height: 28, bgcolor: fill.color,
+                              border: '2px solid', borderColor: 'grey.400', borderRadius: 0.5 }}
+                              title={`${fill.color} — ${fill.width}×${fill.height}px`} />
                           ))}
                         </Box>
-                        <Button size="small" color="warning" variant="outlined" onClick={handleClearFills}>
-                          Clear All Fills
-                        </Button>
+                        <Button size="small" color="warning" variant="outlined" onClick={handleClearFills}>Clear All Fills</Button>
                       </Box>
                     )}
-
                     {pathFills.length === 0 && (
                       <Paper variant="outlined" sx={{ p: 1.5, bgcolor: 'info.light' }}>
                         <Typography variant="caption" color="info.contrastText">
@@ -307,7 +298,6 @@ const PropertiesPanel = () => {
                 Changes apply to editor, preview, and exported code
               </Typography>
             </Paper>
-
             <Paper variant="outlined" sx={{ p: 3, textAlign: 'center', bgcolor: 'grey.50' }}>
               <Typography variant="body2" color="text.secondary">
                 Select an object on the stage to view and edit its properties

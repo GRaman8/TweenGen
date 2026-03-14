@@ -1,14 +1,16 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 
 import { 
   Box, IconButton, Divider, Tooltip, Paper, Button, Badge,
 } from '@mui/material';
 
 import {
-  Crop32 as RectangleIcon, Circle as CircleIcon, TextFields as TextIcon,
+  TextFields as TextIcon,
   Delete as DeleteIcon, KeyboardArrowUp as ArrowUpIcon, KeyboardArrowDown as ArrowDownIcon,
   Brush as BrushIcon, GroupAdd as GroupIcon, GroupRemove as UngroupIcon,
   GpsFixed as AnchorIcon, Check as CheckIcon, FormatColorFill as FillIcon,
+  AddPhotoAlternate as ImageIcon,
+  Category as ShapesIcon,
 } from '@mui/icons-material';
 
 import { 
@@ -17,7 +19,9 @@ import {
   useFillToolActive, useFillToolColor,
 } from '../../store/hooks';
 
-import { createFabricObject, ungroupFabricGroup } from '../../utils/fabricHelpers';
+import { ungroupFabricGroup } from '../../utils/fabricHelpers';
+import { getShapeDef } from '../../utils/shapeDefinitions';
+import ShapePicker from './ShapePicker';
 import * as fabric from 'fabric';
 
 const Toolbar = () => {
@@ -33,6 +37,12 @@ const Toolbar = () => {
   const [fillToolColor, setFillToolColor] = useFillToolColor();
   const [strokeCount, setStrokeCount] = useState(0);
 
+  // Shape picker state
+  const [shapePickerAnchor, setShapePickerAnchor] = useState(null);
+  const shapeButtonRef = useRef(null);
+
+  const fileInputRef = useRef(null);
+
   const canGroup = fabricCanvas?.getActiveObjects().length > 1;
   
   const canUngroup = React.useMemo(() => {
@@ -47,16 +57,85 @@ const Toolbar = () => {
     return () => clearInterval(interval);
   }, [drawingMode, fabricCanvas]);
 
-  const addElement = (type) => {
+  // ===== ADD SHAPE (from ShapePicker) =====
+  const addShape = (shapeKey) => {
+    if (!fabricCanvas) return;
+    const shapeDef = getShapeDef(shapeKey);
+    if (!shapeDef) return;
+
+    const id = `element_${Date.now()}`;
+    const count = canvasObjects.filter(obj => obj.type === shapeKey).length + 1;
+    const name = `${shapeDef.label}_${count}`;
+    const fill = shapeDef.defaultFill;
+
+    const fabricObject = shapeDef.fabricCreate(id, fill);
+    if (!fabricObject) return;
+
+    fabricCanvas.add(fabricObject);
+    fabricCanvas.setActiveObject(fabricObject);
+    fabricCanvas.renderAll();
+
+    const objData = { id, type: shapeKey, name, fill };
+
+    // For SVG-rendered shapes, store the SVG path for LivePreview / export
+    if (shapeDef.renderMode === 'svg') {
+      objData.svgPath = shapeDef.svgPath;
+    }
+
+    setCanvasObjects(prev => [...prev, objData]);
+    setKeyframes(prev => ({ ...prev, [id]: [] }));
+  };
+
+  // ===== ADD TEXT (unchanged) =====
+  const addText = () => {
     if (!fabricCanvas) return;
     const id = `element_${Date.now()}`;
-    const count = canvasObjects.filter(obj => obj.type === type).length + 1;
-    const name = `${type}_${count}`;
-    const fabricObject = createFabricObject(type, id);
-    if (!fabricObject) return;
+    const count = canvasObjects.filter(obj => obj.type === 'text').length + 1;
+    const name = `text_${count}`;
+    const fabricObject = new fabric.Text('Text', {
+      id, left: 100, top: 100, originX: 'center', originY: 'center', fontSize: 24, fill: '#000000',
+    });
     fabricCanvas.add(fabricObject); fabricCanvas.setActiveObject(fabricObject); fabricCanvas.renderAll();
-    setCanvasObjects(prev => [...prev, { id, type, name, textContent: type === 'text' ? 'Text' : undefined, fill: fabricObject.fill }]);
+    setCanvasObjects(prev => [...prev, { id, type: 'text', name, textContent: 'Text', fill: '#000000' }]);
     setKeyframes(prev => ({ ...prev, [id]: [] }));
+  };
+
+  // ===== IMAGE UPLOAD =====
+  const handleImageUpload = (event) => {
+    const file = event.target.files?.[0];
+    if (!file || !fabricCanvas) return;
+
+    const reader = new FileReader();
+    reader.onload = (loadEvent) => {
+      const dataURL = loadEvent.target.result;
+      const imgEl = document.createElement('img');
+      imgEl.onload = () => {
+        const id = `element_${Date.now()}`;
+        const count = canvasObjects.filter(obj => obj.type === 'image').length + 1;
+        const name = `Image_${count}`;
+
+        let initScale = 1;
+        const maxDim = 300;
+        if (imgEl.naturalWidth > maxDim || imgEl.naturalHeight > maxDim) {
+          initScale = maxDim / Math.max(imgEl.naturalWidth, imgEl.naturalHeight);
+        }
+
+        const fabricImg = new fabric.Image(imgEl, {
+          id, left: 350, top: 250, originX: 'center', originY: 'center',
+          scaleX: initScale, scaleY: initScale,
+        });
+
+        fabricCanvas.add(fabricImg); fabricCanvas.setActiveObject(fabricImg); fabricCanvas.renderAll();
+        setCanvasObjects(prev => [...prev, {
+          id, type: 'image', name, imageDataURL: dataURL,
+          imageWidth: imgEl.naturalWidth, imageHeight: imgEl.naturalHeight,
+        }]);
+        setKeyframes(prev => ({ ...prev, [id]: [] }));
+      };
+      imgEl.src = dataURL;
+    };
+    reader.readAsDataURL(file);
+    event.target.value = '';
   };
 
   const groupObjects = () => {
@@ -134,7 +213,6 @@ const Toolbar = () => {
 
   const toggleDrawingMode = () => {
     if (!fabricCanvas) return;
-    // Deactivate fill tool if active
     if (fillToolActive) setFillToolActive(false);
     if (drawingMode && fabricCanvas._commitDrawing) fabricCanvas._commitDrawing();
     setDrawingMode(!drawingMode);
@@ -146,7 +224,6 @@ const Toolbar = () => {
   };
 
   const toggleFillTool = () => {
-    // Deactivate drawing mode if active
     if (drawingMode) {
       if (fabricCanvas?._commitDrawing) fabricCanvas._commitDrawing();
       setDrawingMode(false);
@@ -156,15 +233,40 @@ const Toolbar = () => {
 
   return (
     <Paper sx={{ width: 80, display: 'flex', flexDirection: 'column', p: 1, gap: 1, borderRadius: 0 }}>
-      <Tooltip title="Add Rectangle" placement="right">
-        <IconButton onClick={() => addElement('rectangle')} color="primary"><RectangleIcon /></IconButton>
+      {/* SHAPES PICKER — single button opens flyout */}
+      <Tooltip title="Add Shape" placement="right">
+        <IconButton
+          ref={shapeButtonRef}
+          onClick={() => setShapePickerAnchor(shapeButtonRef.current)}
+          color="primary"
+        >
+          <ShapesIcon />
+        </IconButton>
       </Tooltip>
-      <Tooltip title="Add Circle" placement="right">
-        <IconButton onClick={() => addElement('circle')} color="primary"><CircleIcon /></IconButton>
-      </Tooltip>
+      <ShapePicker
+        anchorEl={shapePickerAnchor}
+        open={Boolean(shapePickerAnchor)}
+        onClose={() => setShapePickerAnchor(null)}
+        onSelectShape={addShape}
+      />
+
       <Tooltip title="Add Text" placement="right">
-        <IconButton onClick={() => addElement('text')} color="primary"><TextIcon /></IconButton>
+        <IconButton onClick={addText} color="primary"><TextIcon /></IconButton>
       </Tooltip>
+
+      {/* IMAGE UPLOAD */}
+      <Tooltip title="Upload Image" placement="right">
+        <IconButton onClick={() => fileInputRef.current?.click()} color="primary">
+          <ImageIcon />
+        </IconButton>
+      </Tooltip>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        style={{ display: 'none' }}
+        onChange={handleImageUpload}
+      />
 
       <Tooltip title={drawingMode ? "Exit Drawing Mode (ESC)" : "Drawing Mode"} placement="right">
         <IconButton onClick={toggleDrawingMode} color={drawingMode ? "secondary" : "primary"}>
@@ -181,7 +283,6 @@ const Toolbar = () => {
         </Tooltip>
       )}
 
-      {/* PAINT BUCKET TOOL */}
       <Tooltip title={fillToolActive ? "Exit Paint Bucket (ESC)" : "Paint Bucket Fill (like MS Paint)"} placement="right">
         <IconButton onClick={toggleFillTool} color={fillToolActive ? "secondary" : "primary"}
           sx={fillToolActive ? { bgcolor: 'secondary.light', '&:hover': { bgcolor: 'secondary.main', color: 'white' } } : {}}>
@@ -189,7 +290,6 @@ const Toolbar = () => {
         </IconButton>
       </Tooltip>
 
-      {/* Fill color swatch — shown when fill tool is active */}
       {fillToolActive && (
         <Tooltip title="Fill color — click to change" placement="right">
           <Box sx={{ display: 'flex', justifyContent: 'center' }}>
