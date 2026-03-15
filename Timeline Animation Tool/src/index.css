@@ -1,41 +1,92 @@
-/* Global Reset */
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #1976d2;
+  --color-primary-light: #e3f2fd;
+  --color-primary-dark: #1565c0;
+  --color-secondary: #9c27b0;
+  --color-secondary-light: #f3e5f5;
+  --color-surface: #ffffff;
+  --color-surface-dim: #fafafa;
+  --color-border: #bdbdbd;
+  --color-text: #212121;
+  --color-text-secondary: #616161;
+  --color-text-disabled: #9e9e9e;
+  --color-success: #2e7d32;
+  --color-success-light: #e8f5e9;
+  --color-warning: #ed6c02;
+  --color-warning-light: #fff3e0;
+  --color-info: #0288d1;
+  --color-info-light: #e1f5fe;
+  --color-error: #d32f2f;
+  --color-error-light: #ffebee;
 }
 
-html, body {
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
-}
+/* ====== Global Reset ====== */
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; overflow: hidden; }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
+  font-family: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  letter-spacing: 0.01em;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: #fafafa;
+  background-color: var(--color-surface-dim);
+  color: var(--color-text);
 }
 
-code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
+#root { width: 100%; height: 100vh; overflow: hidden; }
+
+/* ====== POUR: Operable — focus outlines ====== */
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: 3px;
 }
 
-/* Fabric.js canvas container */
-.canvas-container {
-  margin: 0 auto;
-}
+/* ====== Scrollbar ====== */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: #f1f1f1; }
+::-webkit-scrollbar-thumb { background: #888; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #555; }
 
-/* Disable text selection on canvas controls */
-.upper-canvas {
-  -webkit-user-select: none;
-  -moz-user-select: none;
-  -ms-user-select: none;
-  user-select: none;
+/* ====== Fabric.js ====== */
+.canvas-container { margin: 0 auto; }
+.upper-canvas { -webkit-user-select: none; -moz-user-select: none; user-select: none; }
+
+/* ====== Range slider ====== */
+input[type="range"] {
+  -webkit-appearance: none; appearance: none;
+  width: 100%; height: 6px; background: #c4c4c4; border-radius: 3px;
+  outline: none; cursor: pointer; margin: 8px 0;
 }
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 20px; height: 20px; border-radius: 50%;
+  background: var(--color-primary); cursor: pointer;
+  border: 2px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.2); box-shadow: 0 2px 8px rgba(25,118,210,0.4);
+}
+input[type="range"]:disabled { opacity: 0.45; cursor: not-allowed; }
+input[type="range"]:disabled::-webkit-slider-thumb { background: #999; cursor: not-allowed; transform: none; }
+
+/* ====== Color input ====== */
+input[type="color"] {
+  -webkit-appearance: none; appearance: none;
+  border: 2px solid var(--color-border); border-radius: 6px;
+  cursor: pointer; padding: 2px; transition: border-color 0.15s;
+}
+input[type="color"]:hover { border-color: var(--color-primary); }
+input[type="color"]::-webkit-color-swatch-wrapper { padding: 2px; }
+input[type="color"]::-webkit-color-swatch { border: none; border-radius: 3px; }
+
+/* ====== Number input ====== */
+input[type="number"] { -moz-appearance: textfield; }
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button { opacity: 1; }

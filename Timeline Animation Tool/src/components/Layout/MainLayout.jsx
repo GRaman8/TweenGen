@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { Box, Tabs, Tab } from '@mui/material';
 import Header from './Header';
 import Toolbar from '../Toolbar/Toolbar';
 import Canvas from '../Canvas/Canvas';
@@ -10,69 +9,68 @@ import LivePreview from '../CodeExport/LivePreview';
 const MainLayout = () => {
   const [activeTab, setActiveTab] = useState(0);
 
-  const handleTabChange = (event, newValue) => {
-    setActiveTab(newValue);
-  };
-
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+    <div className="flex flex-col h-screen">
       <Header />
       
-      <Box sx={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+      <div className="flex flex-1 overflow-hidden">
         {/* Left Toolbar */}
         <Toolbar />
         
         {/* Main Content Area */}
-        <Box sx={{ 
-          flex: 1, 
-          display: 'flex', 
-          flexDirection: 'column', 
-          overflow: 'hidden',
-          bgcolor: '#f5f5f5'
-        }}>
-          {/* Tab Navigation */}
-          <Box sx={{ 
-            borderBottom: 1, 
-            borderColor: 'divider',
-            bgcolor: 'background.paper',
-            px: 2
-          }}>
-            <Tabs value={activeTab} onChange={handleTabChange}>
-              <Tab label="Editor" />
-              <Tab label="Live Preview" />
-            </Tabs>
-          </Box>
+        <main className="flex-1 flex flex-col overflow-hidden bg-[#f5f5f5]">
+          {/* Tab Navigation — matches MUI Tabs appearance */}
+          <div className="bg-white border-b border-gray-300 px-4 shrink-0" role="tablist" aria-label="View tabs">
+            <div className="flex">
+              {['Editor', 'Live Preview'].map((label, idx) => (
+                <button
+                  key={label}
+                  role="tab"
+                  aria-selected={activeTab === idx}
+                  aria-controls={`tabpanel-${idx}`}
+                  id={`tab-${idx}`}
+                  onClick={() => setActiveTab(idx)}
+                  className={`
+                    relative px-5 py-3 text-[14px] font-medium tracking-wide transition-colors
+                    border-b-2 min-w-[100px]
+                    ${activeTab === idx 
+                      ? 'text-[#1976d2] border-[#1976d2]' 
+                      : 'text-gray-600 border-transparent hover:text-gray-900 hover:bg-gray-50'}
+                  `}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
 
-          {/* Tab Content - Keep both mounted but hide inactive */}
-          <Box sx={{ 
-            flex: 1, 
-            overflow: 'auto',
-            p: 2,
-            position: 'relative'
-          }}>
-            <Box sx={{ 
-              display: activeTab === 0 ? 'flex' : 'none',
-              flexDirection: 'column',
-              height: '100%'
-            }}>
+          {/* Tab Panels */}
+          <div className="flex-1 overflow-auto p-3">
+            <div
+              role="tabpanel"
+              id="tabpanel-0"
+              aria-labelledby="tab-0"
+              className={activeTab === 0 ? 'flex flex-col h-full' : 'hidden'}
+            >
               <Canvas />
               <Timeline />
-            </Box>
+            </div>
             
-            <Box sx={{ 
-              display: activeTab === 1 ? 'block' : 'none',
-              height: '100%',
-              overflow: 'auto'
-            }}>
+            <div
+              role="tabpanel"
+              id="tabpanel-1"
+              aria-labelledby="tab-1"
+              className={activeTab === 1 ? 'h-full overflow-auto' : 'hidden'}
+            >
               <LivePreview />
-            </Box>
-          </Box>
-        </Box>
+            </div>
+          </div>
+        </main>
         
         {/* Right Properties Panel */}
         <PropertiesPanel />
-      </Box>
-    </Box>
+      </div>
+    </div>
   );
 };
 

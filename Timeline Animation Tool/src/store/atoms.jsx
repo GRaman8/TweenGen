@@ -28,7 +28,7 @@ export const currentTimeState = atom({
 
 export const durationState = atom({
   key: 'durationState',
-  default: 10, // in seconds
+  default: 5, // in seconds
 });
 
 export const isPlayingState = atom({
@@ -53,6 +53,8 @@ export const selectedObjectPropertiesState = atom({
     scaleY: 1,
     rotation: 0,
     opacity: 1,
+    anchorX: 0.5, 
+    anchorY: 0.5,
   },
 });
 
@@ -117,4 +119,39 @@ export const drawingToolSettingsState = atom({
     strokeWidth: 3,
     smoothing: true,
   },
+});
+
+export const anchorEditModeState = atom({
+  key: 'anchorEditModeState',
+  default: false,
+});
+ 
+export const lockedTracksState = atom({
+  key: 'lockedTracksState',
+  default: {},
+});
+ 
+export const trackOrderState = atom({
+  key: 'trackOrderState',
+  default: [],
+});
+ 
+export const canvasBgColorState = atom({
+  key: 'canvasBgColorState',
+  default: '#f0f0f0',
+});
+ 
+export const fillToolActiveState = atom({
+  key: 'fillToolActiveState',
+  default: false,
+});
+ 
+export const fillToolColorState = atom({
+  key: 'fillToolColorState',
+  default: '#ff0000',
+});
+ 
+export const hiddenTracksState = atom({
+  key: 'hiddenTracksState',
+  default: {},
 });
