@@ -519,4 +519,12 @@ This project is licensed under the **MIT License**.
 
 ---
 
+## Author
+
+**Ganapathi Raman**
+- GitHub: [@GRaman8](https://github.com/GRaman8)
+- LinkedIn: [Ganapathi Deivanayagam](https://linkedin.com/in/ganapathi-raman)
+
+---
+
 *Built as a portfolio project demonstrating React architecture, state management, canvas manipulation, animation engines, flood fill algorithms, and code generation.*
