@@ -161,6 +161,7 @@ export const createCompoundPathFromStrokes = (strokes, id, settings) => {
 
 /**
  * Extract properties from a Fabric.js object.
+ * Now includes fill color for color animation between keyframes.
  */
 export const extractPropertiesFromFabricObject = (fabricObject) => {
   if (!fabricObject) return null;
@@ -189,6 +190,10 @@ export const extractPropertiesFromFabricObject = (fabricObject) => {
     absAngle = options.angle;
   }
 
+  // Capture fill color: meaningful for shapes and text, empty/undefined for paths and images
+  const rawFill = fabricObject.fill;
+  const fill = (rawFill && typeof rawFill === 'string' && rawFill.length > 0) ? rawFill : undefined;
+
   const baseProps = {
     x: absLeft,
     y: absTop,
@@ -197,6 +202,7 @@ export const extractPropertiesFromFabricObject = (fabricObject) => {
     rotation: absAngle,
     opacity: fabricObject.opacity !== undefined ? fabricObject.opacity : 1,
     zIndex,
+    fill,
   };
   
   if (fabricObject.type === 'path') {

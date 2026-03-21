@@ -7,7 +7,7 @@ import {
   useCurrentTime, useKeyframes, useCanvasObjects, useIsPlaying,
   useHasActiveSelection, useDrawingMode, useCurrentDrawingPath,
   useDrawingToolSettings, useCanvasBgColor, useSelectedKeyframe,
-  useFillToolActive, useFillToolColor, useTrackOrder,
+  useFillToolActive, useFillToolColor, useTrackOrder, useHiddenTracks,
 } from '../../store/hooks';
 
 import { 
@@ -74,6 +74,7 @@ const Canvas = () => {
   const [fillToolActive, setFillToolActive] = useFillToolActive();
   const [fillToolColor] = useFillToolColor();
   const [, setTrackOrder] = useTrackOrder();
+  const [hiddenTracks] = useHiddenTracks();
   
   const [isInteracting, setIsInteracting] = useState(false);
   const interactingObjectRef = useRef(null);
@@ -87,6 +88,28 @@ const Canvas = () => {
 
   const canvasObjectsRef = useRef(canvasObjects);
   useEffect(() => { canvasObjectsRef.current = canvasObjects; }, [canvasObjects]);
+
+  // ==================== HIDDEN TRACKS → CANVAS VISIBILITY SYNC ====================
+  useEffect(() => {
+    if (!fabricCanvas) return;
+    fabricCanvas.forEachObject(obj => {
+      if (obj._isFill) {
+        // Fill images follow their parent path's visibility
+        const shouldHide = obj._parentId && !!hiddenTracks[obj._parentId];
+        obj.visible = !shouldHide;
+      } else if (obj.id) {
+        const shouldHide = !!hiddenTracks[obj.id];
+        obj.visible = !shouldHide;
+        obj.selectable = !shouldHide;
+        obj.evented = !shouldHide;
+      }
+    });
+    // If the selected object just got hidden, deselect it
+    if (selectedObject && hiddenTracks[selectedObject]) {
+      fabricCanvas.discardActiveObject();
+    }
+    fabricCanvas.renderAll();
+  }, [fabricCanvas, hiddenTracks, selectedObject]);
 
   // ==================== FILL SYNC ====================
   const syncFillsForPath = (pathId) => {
@@ -257,6 +280,10 @@ const Canvas = () => {
     if (fo && kf.properties) {
       fo.set({ left: kf.properties.x, top: kf.properties.y, scaleX: kf.properties.scaleX,
         scaleY: kf.properties.scaleY, angle: kf.properties.rotation, opacity: kf.properties.opacity });
+      // Apply fill color from keyframe if present
+      if (kf.properties.fill) {
+        fo.set('fill', kf.properties.fill);
+      }
       fo._targetZIndex = kf.properties.zIndex ?? 0;
       fo.setCoords();
       fabricCanvas.setActiveObject(fo);
@@ -497,9 +524,21 @@ const Canvas = () => {
   // ==================== MAIN RENDER LOOP (playback + scrubbing) ====================
   useEffect(() => {
     if (!fabricCanvas || isInteracting) return;
+
+    // Respect hidden tracks: hidden objects stay invisible, fills for hidden parents too
     fabricCanvas.forEachObject(obj => {
-      if (!obj._isFill) { obj.visible = true; obj.opacity = obj.opacity || 1; }
+      if (obj._isFill) {
+        obj.visible = !(obj._parentId && hiddenTracks[obj._parentId]);
+      } else if (obj.id && hiddenTracks[obj.id]) {
+        obj.visible = false;
+        obj.selectable = false;
+        obj.evented = false;
+      } else if (!obj._isFill) {
+        obj.visible = true;
+        obj.opacity = obj.opacity || 1;
+      }
     });
+
     if (selectedObject && !isPlaying && !drawingMode && !fillToolActive) {
       const fo = findFabricObjectById(fabricCanvas, selectedObject);
       if (fo && fabricCanvas.getActiveObject() !== fo) fabricCanvas.setActiveObject(fo);
@@ -513,6 +552,9 @@ const Canvas = () => {
       const globalZSwap = findGlobalZSwapPoint(keyframes, currentTime);
 
       canvasObjects.forEach(obj => {
+        // Skip hidden objects during playback
+        if (hiddenTracks[obj.id]) return;
+
         const objKfs = keyframes[obj.id] || [];
         if (objKfs.length === 0) return;
         const fo = findFabricObjectById(fabricCanvas, obj.id);
@@ -534,7 +576,7 @@ const Canvas = () => {
     if (isPlaying) {
       syncTrackOrderFromCanvas();
     }
-  }, [currentTime, keyframes, canvasObjects, fabricCanvas, isInteracting, selectedObject, isPlaying, drawingMode, fillToolActive, syncTrackOrderFromCanvas]);
+  }, [currentTime, keyframes, canvasObjects, fabricCanvas, isInteracting, selectedObject, isPlaying, drawingMode, fillToolActive, hiddenTracks, syncTrackOrderFromCanvas]);
 
   useEffect(() => {
     if (!fabricCanvas || isInteracting) return;

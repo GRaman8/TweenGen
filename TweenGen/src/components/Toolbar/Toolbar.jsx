@@ -11,6 +11,7 @@ import {
   GpsFixed as AnchorIcon, Check as CheckIcon, FormatColorFill as FillIcon,
   AddPhotoAlternate as ImageIcon,
   Category as ShapesIcon,
+  ContentCopy as DuplicateIcon,
 } from '@mui/icons-material';
 
 import { 
@@ -19,7 +20,7 @@ import {
   useFillToolActive, useFillToolColor,
 } from '../../store/hooks';
 
-import { ungroupFabricGroup } from '../../utils/fabricHelpers';
+import { ungroupFabricGroup, findFabricObjectById } from '../../utils/fabricHelpers';
 import { getShapeDef } from '../../utils/shapeDefinitions';
 import ShapePicker from './ShapePicker';
 import * as fabric from 'fabric';
@@ -137,6 +138,91 @@ const Toolbar = () => {
     reader.readAsDataURL(file);
     event.target.value = '';
   };
+
+  // ===== DUPLICATE SELECTED OBJECT =====
+  const duplicateObject = () => {
+    if (!fabricCanvas || !selectedObject) return;
+    const objData = canvasObjects.find(obj => obj.id === selectedObject);
+    if (!objData) return;
+
+    const fo = findFabricObjectById(fabricCanvas, selectedObject);
+    if (!fo) return;
+
+    const newId = `element_${Date.now()}`;
+    const count = canvasObjects.filter(obj => obj.type === objData.type).length + 1;
+    const offset = 30; // Offset so copy doesn't sit directly on original
+
+    if (objData.type === 'image') {
+      // Duplicate image: reuse the same dataURL
+      const imgEl = document.createElement('img');
+      imgEl.onload = () => {
+        const newImg = new fabric.Image(imgEl, {
+          id: newId,
+          left: (fo.left || 350) + offset,
+          top: (fo.top || 250) + offset,
+          originX: 'center', originY: 'center',
+          scaleX: fo.scaleX || 1, scaleY: fo.scaleY || 1,
+          angle: fo.angle || 0, opacity: fo.opacity ?? 1,
+        });
+        fabricCanvas.add(newImg);
+        fabricCanvas.setActiveObject(newImg);
+        fabricCanvas.renderAll();
+
+        setCanvasObjects(prev => [...prev, {
+          id: newId, type: 'image', name: `Image_${count}`,
+          imageDataURL: objData.imageDataURL,
+          imageWidth: objData.imageWidth, imageHeight: objData.imageHeight,
+        }]);
+        setKeyframes(prev => ({ ...prev, [newId]: [] }));
+        setSelectedObject(newId);
+      };
+      imgEl.src = objData.imageDataURL;
+
+    } else if (objData.type === 'text') {
+      // Duplicate text
+      const textContent = fo.text || objData.textContent || 'Text';
+      const fillColor = fo.fill || objData.fill || '#000000';
+      const newText = new fabric.Text(textContent, {
+        id: newId, left: (fo.left || 100) + offset, top: (fo.top || 100) + offset,
+        originX: 'center', originY: 'center', fontSize: fo.fontSize || 24,
+        fill: fillColor, angle: fo.angle || 0, opacity: fo.opacity ?? 1,
+        scaleX: fo.scaleX || 1, scaleY: fo.scaleY || 1,
+      });
+      fabricCanvas.add(newText); fabricCanvas.setActiveObject(newText); fabricCanvas.renderAll();
+      setCanvasObjects(prev => [...prev, { id: newId, type: 'text', name: `text_${count}`, textContent, fill: fillColor }]);
+      setKeyframes(prev => ({ ...prev, [newId]: [] }));
+      setSelectedObject(newId);
+
+    } else if (objData.type !== 'path' && objData.type !== 'group') {
+      // Duplicate solid shapes (rectangle, circle, star, etc.)
+      const shapeDef = getShapeDef(objData.type);
+      if (!shapeDef) return;
+      const fillColor = fo.fill || objData.fill || shapeDef.defaultFill;
+      const newShape = shapeDef.fabricCreate(newId, fillColor);
+      if (!newShape) return;
+      newShape.set({
+        left: (fo.left || 350) + offset,
+        top: (fo.top || 250) + offset,
+        scaleX: fo.scaleX || 1, scaleY: fo.scaleY || 1,
+        angle: fo.angle || 0, opacity: fo.opacity ?? 1,
+      });
+      fabricCanvas.add(newShape); fabricCanvas.setActiveObject(newShape); fabricCanvas.renderAll();
+
+      const newObjData = { id: newId, type: objData.type, name: `${shapeDef.label}_${count}`, fill: fillColor };
+      if (shapeDef.renderMode === 'svg') newObjData.svgPath = shapeDef.svgPath;
+      setCanvasObjects(prev => [...prev, newObjData]);
+      setKeyframes(prev => ({ ...prev, [newId]: [] }));
+      setSelectedObject(newId);
+    }
+  };
+
+  // Check if selected object can be duplicated (shapes, text, images — not groups or paths)
+  const canDuplicate = React.useMemo(() => {
+    if (!selectedObject) return false;
+    const objData = canvasObjects.find(obj => obj.id === selectedObject);
+    if (!objData) return false;
+    return objData.type !== 'group' && objData.type !== 'path';
+  }, [selectedObject, canvasObjects]);
 
   const groupObjects = () => {
     if (!fabricCanvas) return;
@@ -310,6 +396,15 @@ const Toolbar = () => {
       </Tooltip>
       
       <Divider sx={{ my: 1 }} />
+
+      {/* DUPLICATE OBJECT */}
+      <Tooltip title="Duplicate Selected Object" placement="right">
+        <span>
+          <IconButton onClick={duplicateObject} disabled={!canDuplicate} color="primary">
+            <DuplicateIcon />
+          </IconButton>
+        </span>
+      </Tooltip>
       
       <Tooltip title="Group Selected (Cmd/Ctrl+G)" placement="right">
         <span><IconButton onClick={groupObjects} disabled={!canGroup} color="primary"><GroupIcon /></IconButton></span>

@@ -1,6 +1,6 @@
 /**
  * Code Generator — Produces standalone HTML/CSS/JS animation
- * Supports: all shape types (CSS + SVG), paths, groups, images, canvas bg color
+ * Supports: all shape types (CSS + SVG), paths, groups, images, canvas bg color, color animation
  */
 
 import { normalizeKeyframeRotations, findSurroundingKeyframes } from './interpolation';
@@ -39,6 +39,28 @@ const generateZSwapCode = (selector, prev, curr, globalSwapPoint) => {
   if (prevZ === currZ) return '';
   const swapTime = prev.time + (curr.time - prev.time) * globalSwapPoint;
   return `    tl.set('${selector}', { zIndex: ${currZ} }, ${swapTime.toFixed(2)});\n`;
+};
+
+/**
+ * Generate fill color animation code for a segment between two keyframes.
+ * Returns JS code string or empty string if no color change.
+ */
+const generateFillAnimCode = (objId, objType, prev, curr) => {
+  const prevFill = prev.properties.fill;
+  const currFill = curr.properties.fill;
+  if (!prevFill || !currFill || prevFill === currFill) return '';
+  
+  const dur = (curr.time - prev.time).toFixed(2);
+  const ease = mapEasingToGSAP(curr.easing || 'linear');
+  const time = prev.time.toFixed(2);
+  
+  if (objType === 'text') {
+    return `    tl.to('#${objId}', { duration: ${dur}, color: '${currFill}', ease: '${ease}' }, ${time});\n`;
+  } else if (SVG_SHAPE_KEYS.has(objType)) {
+    return `    tl.to('#${objId} path', { duration: ${dur}, attr: { fill: '${currFill}' }, ease: '${ease}' }, ${time});\n`;
+  } else {
+    return `    tl.to('#${objId}', { duration: ${dur}, backgroundColor: '${currFill}', ease: '${ease}' }, ${time});\n`;
+  }
 };
 
 const mapEasingToGSAP = (easing) => {
@@ -114,7 +136,8 @@ const generateCSS = (canvasObjects, keyframes, fabricCanvas, canvasBgColor) => {
     const ax = obj.anchorX ?? 0.5, ay = obj.anchorY ?? 0.5;
     let ew = 100, eh = 100;
     if (obj.type === 'ellipse') eh = 76;
-    const fillColor = obj.fill || getDefaultFillColor(obj.type);
+    // Use first keyframe fill color if available (for color animation)
+    const fillColor = p.fill || obj.fill || getDefaultFillColor(obj.type);
 
     css += `#${obj.id} {\n    position: absolute;\n    left: ${(p.x - ax * ew).toFixed(2)}px;\n    top: ${(p.y - ay * eh).toFixed(2)}px;\n    transform-origin: ${(ax * 100).toFixed(0)}% ${(ay * 100).toFixed(0)}%;\n    opacity: ${p.opacity};\n    z-index: ${p.zIndex ?? 0};\n`;
     if (obj.type === 'rectangle') css += `    width: 100px; height: 100px; background-color: ${fillColor};\n`;
@@ -184,7 +207,8 @@ const generateJavaScript = (canvasObjects, keyframes, duration, loopPlayback, fa
 const generateSvgShapeCreation = (obj, firstKf) => {
   const ax = obj.anchorX ?? 0.5, ay = obj.anchorY ?? 0.5;
   const ew = 100, eh = 100, z = firstKf.properties.zIndex ?? 0;
-  const fillColor = obj.fill || '#000000';
+  // Prefer keyframe fill for initial color
+  const fillColor = firstKf.properties.fill || obj.fill || '#000000';
   return `    // Create ${obj.name} (SVG Shape)
     const ${obj.id} = document.createElement('div');
     ${obj.id}.id = '${obj.id}';
@@ -222,7 +246,8 @@ const generateRegularCreation = (obj, firstKf) => {
   const ax = obj.anchorX ?? 0.5, ay = obj.anchorY ?? 0.5;
   let ew = 100, eh = 100;
   if (obj.type === 'ellipse') eh = 76;
-  const fillColor = obj.fill || getDefaultFillColor(obj.type);
+  // Prefer keyframe fill for initial color
+  const fillColor = firstKf.properties.fill || obj.fill || getDefaultFillColor(obj.type);
   const z = firstKf.properties.zIndex ?? 0;
   let js = `    // Create ${obj.name}
     const ${obj.id} = document.createElement('div');
@@ -256,6 +281,8 @@ const generateStandardAnimation = (obj, objKfs, allNormalizedKfs, ew, eh) => {
     const gs = findGlobalZSwapForSegment(allNormalizedKfs, prev.time, curr.time);
     js += `    tl.to('#${obj.id}', { duration: ${(curr.time - prev.time).toFixed(2)}, left: '${(curr.properties.x - ax * ew).toFixed(2)}px', top: '${(curr.properties.y - ay * eh).toFixed(2)}px', scaleX: ${curr.properties.scaleX.toFixed(2)}, scaleY: ${curr.properties.scaleY.toFixed(2)}, rotation: ${curr.properties.rotation.toFixed(2)}, opacity: ${curr.properties.opacity.toFixed(2)}, ease: '${mapEasingToGSAP(curr.easing || 'linear')}' }, ${prev.time.toFixed(2)});\n`;
     js += generateZSwapCode(`#${obj.id}`, prev, curr, gs);
+    // Fill color animation (backgroundColor for CSS shapes, color for text, attr.fill for SVG)
+    js += generateFillAnimCode(obj.id, obj.type, prev, curr);
   }
   return js + '    \n';
 };

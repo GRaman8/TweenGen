@@ -8,6 +8,41 @@ export const lerp = (start, end, t) => {
 };
 
 /**
+ * Color interpolation helpers
+ */
+const hexToRgb = (hex) => {
+  if (!hex || typeof hex !== 'string') return null;
+  const clean = hex.replace('#', '');
+  if (clean.length !== 6) return null;
+  const r = parseInt(clean.substring(0, 2), 16);
+  const g = parseInt(clean.substring(2, 4), 16);
+  const b = parseInt(clean.substring(4, 6), 16);
+  if (isNaN(r) || isNaN(g) || isNaN(b)) return null;
+  return { r, g, b };
+};
+
+const rgbToHex = (r, g, b) => {
+  return '#' + [r, g, b]
+    .map(c => Math.round(Math.max(0, Math.min(255, c))).toString(16).padStart(2, '0'))
+    .join('');
+};
+
+/**
+ * Interpolate between two hex color strings.
+ * Returns hex string or undefined if either input is invalid.
+ */
+export const lerpColor = (color1, color2, t) => {
+  const c1 = hexToRgb(color1);
+  const c2 = hexToRgb(color2);
+  if (!c1 || !c2) return color2 || color1 || undefined;
+  return rgbToHex(
+    lerp(c1.r, c2.r, t),
+    lerp(c1.g, c2.g, t),
+    lerp(c1.b, c2.b, t),
+  );
+};
+
+/**
  * Normalize an angle delta to [-180, 180] so animations take the shortest path.
  */
 const normalizeAngle = (prevAngle, nextAngle) => {
@@ -81,6 +116,7 @@ export const findGlobalZSwapPoint = (allKeyframes, time) => {
  * Interpolate properties between two keyframes at a given time with easing.
  * Rotation is normalized to take the shortest angular path.
  * zIndex uses step interpolation at a configurable swap point.
+ * Fill color is linearly interpolated in RGB space.
  * 
  * @param {Object} beforeKf - The keyframe before (or at) the current time
  * @param {Object} afterKf - The keyframe after (or at) the current time
@@ -111,6 +147,13 @@ export const interpolateProperties = (beforeKf, afterKf, time, easingType = 'lin
   const swapPoint = globalZSwapPoint ?? afterKf.zSwapPoint ?? 0.5;
   const interpolatedZ = rawT < swapPoint ? beforeZ : afterZ;
 
+  // Fill color interpolation (if both keyframes have fill data)
+  const beforeFill = beforeKf.properties.fill;
+  const afterFill = afterKf.properties.fill;
+  const interpolatedFill = (beforeFill && afterFill)
+    ? lerpColor(beforeFill, afterFill, t)
+    : (afterFill || beforeFill);
+
   return {
     x: lerp(beforeKf.properties.x, afterKf.properties.x, t),
     y: lerp(beforeKf.properties.y, afterKf.properties.y, t),
@@ -119,6 +162,7 @@ export const interpolateProperties = (beforeKf, afterKf, time, easingType = 'lin
     rotation: lerp(beforeKf.properties.rotation, normalizedRotation, t),
     opacity: lerp(beforeKf.properties.opacity, afterKf.properties.opacity, t),
     zIndex: interpolatedZ,
+    fill: interpolatedFill,
   };
 };
 
@@ -126,6 +170,7 @@ export const interpolateProperties = (beforeKf, afterKf, time, easingType = 'lin
  * Apply interpolated properties to a Fabric.js object.
  * Sets left/top directly (origin point position).
  * Applies zIndex by reordering on canvas.
+ * Applies fill color if present.
  */
 export const applyPropertiesToFabricObject = (fabricObject, properties) => {
   if (!fabricObject || !properties) return;
@@ -138,6 +183,11 @@ export const applyPropertiesToFabricObject = (fabricObject, properties) => {
     angle: properties.rotation,
     opacity: properties.opacity,
   });
+
+  // Apply fill color animation (shapes and text)
+  if (properties.fill) {
+    fabricObject.set('fill', properties.fill);
+  }
 
   // Store target zIndex for batch reordering
   if (properties.zIndex !== undefined) {
@@ -195,7 +245,7 @@ export const snapToNearestKeyframe = (time, keyframes, threshold = 0.1) => {
 /**
  * Pre-process keyframes to normalize rotation values for animation.
  * Used by LivePreview and codeGenerator before building GSAP timelines.
- * Preserves all keyframe-level properties (easing, zSwapPoint, etc).
+ * Preserves all keyframe-level properties (easing, zSwapPoint, fill, etc).
  */
 export const normalizeKeyframeRotations = (keyframes) => {
   if (!keyframes || keyframes.length < 2) return keyframes;

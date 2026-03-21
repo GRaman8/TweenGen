@@ -93,8 +93,21 @@ const LivePreview = () => {
     return () => { if (timelineRef.current) timelineRef.current.kill(); };
   }, [canvasObjects, keyframes, duration, fabricCanvas, canvasBgColor]);
 
-  // Helper for animating keyframes (shared by multiple renderers)
-  const animateElement = (el, objKfs, allNormalizedKfs, anchorX, anchorY, ew, eh) => {
+  /**
+   * Core animation helper — animates position, scale, rotation, opacity, z-index.
+   * Optionally animates fill color if fillTarget and fillProp are provided.
+   * 
+   * @param {HTMLElement} el - The element to animate position/scale/rotation/opacity on
+   * @param {Array} objKfs - Normalized keyframes for this object
+   * @param {Object} allNormalizedKfs - All objects' keyframes (for global z-swap)
+   * @param {number} anchorX - Anchor X (0-1)
+   * @param {number} anchorY - Anchor Y (0-1)
+   * @param {number} ew - Element width
+   * @param {number} eh - Element height
+   * @param {HTMLElement|SVGElement|null} fillTarget - Element to animate fill on (null to skip)
+   * @param {string|null} fillProp - CSS prop ('backgroundColor', 'color') or 'fill' for SVG attr
+   */
+  const animateElement = (el, objKfs, allNormalizedKfs, anchorX, anchorY, ew, eh, fillTarget = null, fillProp = null) => {
     const timeline = timelineRef.current;
     for (let i = 1; i < objKfs.length; i++) {
       const prev = objKfs[i - 1], curr = objKfs[i];
@@ -108,6 +121,23 @@ const LivePreview = () => {
         ease: curr.easing || 'none',
       }, prev.time);
       addZSwapTween(timeline, el, prev, curr, globalSwap);
+
+      // Fill color animation between keyframes
+      if (fillTarget && fillProp) {
+        const prevFill = prev.properties.fill;
+        const currFill = curr.properties.fill;
+        if (prevFill && currFill && prevFill !== currFill) {
+          const dur = curr.time - prev.time;
+          const ease = curr.easing || 'none';
+          if (fillProp === 'fill') {
+            // SVG attribute animation
+            timeline.to(fillTarget, { duration: dur, attr: { fill: currFill }, ease }, prev.time);
+          } else {
+            // CSS property animation (backgroundColor, color)
+            timeline.to(fillTarget, { duration: dur, [fillProp]: currFill, ease }, prev.time);
+          }
+        }
+      }
     }
   };
 
@@ -118,7 +148,8 @@ const LivePreview = () => {
     const firstKf = objKfs[0];
     const anchorX = obj.anchorX ?? 0.5, anchorY = obj.anchorY ?? 0.5;
     const ew = 100, eh = 100;
-    const fillColor = obj.fill || '#000000';
+    // Prefer keyframe fill, then obj.fill, then default
+    const fillColor = firstKf.properties.fill || obj.fill || '#000000';
 
     const wrapper = document.createElement('div');
     wrapper.id = obj.id;
@@ -147,7 +178,8 @@ const LivePreview = () => {
       rotation: firstKf.properties.rotation, opacity: firstKf.properties.opacity,
     });
 
-    animateElement(wrapper, objKfs, allNormalizedKfs, anchorX, anchorY, ew, eh);
+    // Animate with SVG fill color support (targets the <path> element)
+    animateElement(wrapper, objKfs, allNormalizedKfs, anchorX, anchorY, ew, eh, pathEl, 'fill');
   };
 
   // ===== CSS SHAPES (rectangle, circle, ellipse, roundedRect, text) =====
@@ -156,7 +188,8 @@ const LivePreview = () => {
     if (objKfs.length === 0) return;
     const firstKf = objKfs[0];
     const anchorX = obj.anchorX ?? 0.5, anchorY = obj.anchorY ?? 0.5;
-    const fillColor = obj.fill || getDefaultFillColor(obj.type);
+    // Prefer keyframe fill, then obj.fill, then default
+    const fillColor = firstKf.properties.fill || obj.fill || getDefaultFillColor(obj.type);
 
     let ew = 100, eh = 100;
     const el = document.createElement('div');
@@ -187,7 +220,9 @@ const LivePreview = () => {
       rotation: firstKf.properties.rotation, opacity: firstKf.properties.opacity,
     });
 
-    animateElement(el, objKfs, allNormalizedKfs, anchorX, anchorY, ew, eh);
+    // Animate with CSS fill color support (backgroundColor for shapes, color for text)
+    const fillProp = obj.type === 'text' ? 'color' : 'backgroundColor';
+    animateElement(el, objKfs, allNormalizedKfs, anchorX, anchorY, ew, eh, el, fillProp);
   };
 
   // ===== IMAGE =====
@@ -213,6 +248,7 @@ const LivePreview = () => {
       rotation: firstKf.properties.rotation, opacity: firstKf.properties.opacity,
     });
 
+    // Images don't have fill color animation
     animateElement(el, objKfs, allNormalizedKfs, anchorX, anchorY, ew, eh);
   };
 
