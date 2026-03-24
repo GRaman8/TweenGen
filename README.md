@@ -504,7 +504,6 @@ These work identically to the base version — quadratic Bézier smoothing for d
 - Audio waveform zoom and pan for precise trimming
 - Multi-track audio support
 - Video export (render to MP4)
-- Freehand drawing and group duplication
 
 ---
 

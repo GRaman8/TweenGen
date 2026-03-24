@@ -28,6 +28,139 @@ import { getShapeDef } from '../../utils/shapeDefinitions';
 import ShapePicker from './ShapePicker';
 import * as fabric from 'fabric';
 
+/**
+ * Convert a Fabric.js path array back to an SVG path string.
+ */
+const fabricPathToSVGPathString = (pathArray) => {
+  if (!pathArray || !Array.isArray(pathArray)) return '';
+  let s = '';
+  pathArray.forEach(seg => {
+    if (Array.isArray(seg)) {
+      s += seg[0] + ' ' + seg.slice(1).join(' ') + ' ';
+    }
+  });
+  return s.trim();
+};
+
+/**
+ * Clone a single fabric child object with a new ID, preserving all
+ * type-specific properties and relative position within the group.
+ */
+const cloneFabricChild = (fc, newChildId) => {
+  const common = {
+    id: newChildId,
+    left: fc.left || 0,
+    top: fc.top || 0,
+    scaleX: fc.scaleX || 1,
+    scaleY: fc.scaleY || 1,
+    angle: fc.angle || 0,
+    opacity: fc.opacity ?? 1,
+    originX: fc.originX || 'center',
+    originY: fc.originY || 'center',
+  };
+
+  const fabricType = fc.type;
+
+  if (fabricType === 'rect') {
+    return new fabric.Rect({
+      ...common,
+      width: fc.width || 100, height: fc.height || 100,
+      rx: fc.rx || 0, ry: fc.ry || 0,
+      fill: fc.fill || '#3b82f6',
+      stroke: fc.stroke || null, strokeWidth: fc.strokeWidth || 0,
+    });
+  }
+  if (fabricType === 'circle') {
+    return new fabric.Circle({
+      ...common,
+      radius: fc.radius || 50,
+      fill: fc.fill || '#ef4444',
+      stroke: fc.stroke || null, strokeWidth: fc.strokeWidth || 0,
+    });
+  }
+  if (fabricType === 'ellipse') {
+    return new fabric.Ellipse({
+      ...common,
+      rx: fc.rx || 50, ry: fc.ry || 38,
+      fill: fc.fill || '#a855f7',
+      stroke: fc.stroke || null, strokeWidth: fc.strokeWidth || 0,
+    });
+  }
+  if (fabricType === 'polygon') {
+    const points = (fc.points || []).map(p => ({ x: p.x, y: p.y }));
+    return new fabric.Polygon(points, {
+      ...common,
+      fill: fc.fill || '#000000',
+      stroke: fc.stroke || null, strokeWidth: fc.strokeWidth || 0,
+    });
+  }
+  if (fabricType === 'path') {
+    const pathString = fabricPathToSVGPathString(fc.path);
+    if (!pathString) return null;
+    return new fabric.Path(pathString, {
+      ...common,
+      fill: fc.fill || '',
+      stroke: fc.stroke || '#000000',
+      strokeWidth: fc.strokeWidth || 3,
+      strokeLineCap: 'round', strokeLineJoin: 'round',
+    });
+  }
+  if (fabricType === 'text' || fabricType === 'i-text' || fabricType === 'textbox') {
+    return new fabric.Text(fc.text || 'Text', {
+      ...common,
+      fontSize: fc.fontSize || 24,
+      fill: fc.fill || '#000000',
+      stroke: fc.stroke || null, strokeWidth: fc.strokeWidth || 0,
+    });
+  }
+  // image — handled separately (async)
+  return null;
+};
+
+/**
+ * Build the canvasObjects entry for a cloned child.
+ */
+const buildChildObjData = (srcChildData, newChildId) => {
+  if (!srcChildData) return null;
+
+  const base = {
+    id: newChildId,
+    type: srcChildData.type,
+    name: `${srcChildData.name || srcChildData.type}_copy`,
+    fill: srcChildData.fill,
+  };
+
+  if (srcChildData.outlineWidth) {
+    base.outlineWidth = srcChildData.outlineWidth;
+    base.outlineColor = srcChildData.outlineColor || '#000000';
+  }
+  if (srcChildData.svgPath) base.svgPath = srcChildData.svgPath;
+  if (srcChildData.textContent) base.textContent = srcChildData.textContent;
+
+  if (srcChildData.type === 'path') {
+    base.pathData = srcChildData.pathData;
+    base.strokeColor = srcChildData.strokeColor;
+    base.strokeWidth = srcChildData.strokeWidth;
+    base.fillColor = srcChildData.fillColor || '';
+    base.boundingBox = srcChildData.boundingBox ? { ...srcChildData.boundingBox } : undefined;
+    base.pathOffsetX = srcChildData.pathOffsetX;
+    base.pathOffsetY = srcChildData.pathOffsetY;
+    base.fills = []; // Filled by caller
+  }
+  if (srcChildData.type === 'image') {
+    base.imageDataURL = srcChildData.imageDataURL;
+    base.imageWidth = srcChildData.imageWidth;
+    base.imageHeight = srcChildData.imageHeight;
+    base.svgExportMode = srcChildData.svgExportMode;
+    base.svgTracedData = srcChildData.svgTracedData;
+    base.svgTracePreset = srcChildData.svgTracePreset;
+    base.vectorPreviewURL = srcChildData.vectorPreviewURL;
+  }
+
+  return base;
+};
+
+
 const Toolbar = () => {
   const [selectedObject, setSelectedObject] = useSelectedObject();
   const [fabricCanvas] = useFabricCanvas();
@@ -41,14 +174,11 @@ const Toolbar = () => {
   const [fillToolColor, setFillToolColor] = useFillToolColor();
   const [strokeCount, setStrokeCount] = useState(0);
 
-  // Audio state
   const [audioFile, setAudioFile] = useAudioFile();
   const [, setAudioWaveform] = useAudioWaveform();
 
-  // Shape picker state
   const [shapePickerAnchor, setShapePickerAnchor] = useState(null);
   const shapeButtonRef = useRef(null);
-
   const fileInputRef = useRef(null);
   const audioInputRef = useRef(null);
 
@@ -135,36 +265,21 @@ const Toolbar = () => {
   const handleAudioUpload = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
-
     try {
-      // Read as ArrayBuffer (for waveform + lossless export)
       const arrayBuffer = await file.arrayBuffer();
-
-      // Read as dataURL (for HTMLAudioElement playback)
       const dataURL = await new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = (e) => resolve(e.target.result);
         reader.onerror = reject;
         reader.readAsDataURL(file);
       });
-
-      // Generate waveform peaks
       const { peaks, duration: audioDuration } = await generateWaveformPeaks(arrayBuffer, 300);
-
-      // Store audio data
-      setAudioFile({
-        dataURL,
-        fileName: file.name,
-        mimeType: file.type || 'audio/mpeg',
-        arrayBuffer, // Original bytes — untouched
-        duration: audioDuration,
-      });
+      setAudioFile({ dataURL, fileName: file.name, mimeType: file.type || 'audio/mpeg', arrayBuffer, duration: audioDuration });
       setAudioWaveform(peaks);
     } catch (err) {
       console.error('Audio upload failed:', err);
       alert('Failed to load audio file. Please try an MP3, WAV, or OGG file.');
     }
-
     event.target.value = '';
   };
 
@@ -179,6 +294,12 @@ const Toolbar = () => {
     const count = canvasObjects.filter(obj => obj.type === objData.type).length + 1;
     const offset = 30;
 
+    // Read outline from the source
+    const srcStroke = fo.stroke || null;
+    const srcStrokeWidth = fo.strokeWidth || 0;
+    const srcOutlineWidth = objData.outlineWidth || 0;
+    const srcOutlineColor = objData.outlineColor || '#000000';
+
     if (objData.type === 'image') {
       const imgEl = document.createElement('img');
       imgEl.onload = () => {
@@ -191,11 +312,15 @@ const Toolbar = () => {
         setCanvasObjects(prev => [...prev, {
           id: newId, type: 'image', name: `Image_${count}`,
           imageDataURL: objData.imageDataURL, imageWidth: objData.imageWidth, imageHeight: objData.imageHeight,
+          svgExportMode: objData.svgExportMode, svgTracedData: objData.svgTracedData,
+          svgTracePreset: objData.svgTracePreset, vectorPreviewURL: objData.vectorPreviewURL,
         }]);
         setKeyframes(prev => ({ ...prev, [newId]: [] }));
         setSelectedObject(newId);
       };
-      imgEl.src = objData.imageDataURL;
+      imgEl.src = (objData.svgExportMode === 'vector' && objData.vectorPreviewURL)
+        ? objData.vectorPreviewURL : objData.imageDataURL;
+
     } else if (objData.type === 'text') {
       const textContent = fo.text || objData.textContent || 'Text';
       const fillColor = fo.fill || objData.fill || '#000000';
@@ -204,12 +329,70 @@ const Toolbar = () => {
         originX: 'center', originY: 'center', fontSize: fo.fontSize || 24,
         fill: fillColor, angle: fo.angle || 0, opacity: fo.opacity ?? 1,
         scaleX: fo.scaleX || 1, scaleY: fo.scaleY || 1,
+        stroke: srcStroke, strokeWidth: srcStrokeWidth,
       });
       fabricCanvas.add(newText); fabricCanvas.setActiveObject(newText); fabricCanvas.renderAll();
-      setCanvasObjects(prev => [...prev, { id: newId, type: 'text', name: `text_${count}`, textContent, fill: fillColor }]);
+      setCanvasObjects(prev => [...prev, {
+        id: newId, type: 'text', name: `text_${count}`, textContent, fill: fillColor,
+        outlineWidth: srcOutlineWidth, outlineColor: srcOutlineColor,
+      }]);
       setKeyframes(prev => ({ ...prev, [newId]: [] }));
       setSelectedObject(newId);
-    } else if (objData.type !== 'path' && objData.type !== 'group') {
+
+    } else if (objData.type === 'path') {
+      // ===== PATH / FREEHAND DRAWING DUPLICATION =====
+      const pathString = fabricPathToSVGPathString(fo.path);
+      if (!pathString) return;
+      const newPath = new fabric.Path(pathString, {
+        id: newId, left: (fo.left || 350) + offset, top: (fo.top || 250) + offset,
+        originX: 'center', originY: 'center',
+        scaleX: fo.scaleX || 1, scaleY: fo.scaleY || 1,
+        angle: fo.angle || 0, opacity: fo.opacity ?? 1,
+        stroke: fo.stroke || objData.strokeColor || '#000000',
+        strokeWidth: fo.strokeWidth || objData.strokeWidth || 3,
+        fill: fo.fill || '', strokeLineCap: 'round', strokeLineJoin: 'round', selectable: true,
+      });
+      fabricCanvas.add(newPath);
+
+      // Duplicate paint bucket fills
+      const newFills = [];
+      if (objData.fills && objData.fills.length > 0) {
+        objData.fills.forEach((fillData, idx) => {
+          const fillImgEl = new Image();
+          const newFillId = `_fill_${Date.now()}_${idx}`;
+          fillImgEl.onload = () => {
+            const fillFabricImg = new fabric.Image(fillImgEl, {
+              left: (fillData.left || 0) + offset, top: (fillData.top || 0) + offset,
+              width: fillData.width, height: fillData.height,
+              originX: 'left', originY: 'top', selectable: false, evented: false, id: newFillId,
+            });
+            fillFabricImg._isFill = true; fillFabricImg._parentId = newId;
+            fillFabricImg._relLeft = fillData.relLeft; fillFabricImg._relTop = fillData.relTop;
+            fabricCanvas.add(fillFabricImg);
+            try { if (typeof fabricCanvas.sendObjectToBack === 'function') fabricCanvas.sendObjectToBack(fillFabricImg); else if (typeof fabricCanvas.sendToBack === 'function') fabricCanvas.sendToBack(fillFabricImg); } catch (e) {}
+            fabricCanvas.renderAll();
+          };
+          fillImgEl.src = fillData.dataURL;
+          newFills.push({ id: newFillId, dataURL: fillData.dataURL, left: (fillData.left || 0) + offset, top: (fillData.top || 0) + offset, width: fillData.width, height: fillData.height, color: fillData.color, relLeft: fillData.relLeft, relTop: fillData.relTop });
+        });
+      }
+      fabricCanvas.setActiveObject(newPath); fabricCanvas.renderAll();
+      setCanvasObjects(prev => [...prev, {
+        id: newId, type: 'path', name: `Drawing_${count}`, pathData: newPath.path,
+        strokeColor: fo.stroke || objData.strokeColor || '#000000',
+        strokeWidth: fo.strokeWidth || objData.strokeWidth || 3, fillColor: '',
+        boundingBox: { width: newPath.width, height: newPath.height },
+        pathOffsetX: newPath.pathOffset?.x || 0, pathOffsetY: newPath.pathOffset?.y || 0, fills: newFills,
+      }]);
+      setKeyframes(prev => ({ ...prev, [newId]: [] }));
+      setSelectedObject(newId);
+
+    } else if (objData.type === 'group') {
+      // ===== GROUP DUPLICATION =====
+      duplicateGroup(objData, fo, newId, offset).catch(err => console.error('Group duplication failed:', err));
+
+    } else {
+      // ===== SOLID SHAPES =====
       const shapeDef = getShapeDef(objData.type);
       if (!shapeDef) return;
       const fillColor = fo.fill || objData.fill || shapeDef.defaultFill;
@@ -219,9 +402,13 @@ const Toolbar = () => {
         left: (fo.left || 350) + offset, top: (fo.top || 250) + offset,
         scaleX: fo.scaleX || 1, scaleY: fo.scaleY || 1,
         angle: fo.angle || 0, opacity: fo.opacity ?? 1,
+        stroke: srcStroke, strokeWidth: srcStrokeWidth,
       });
       fabricCanvas.add(newShape); fabricCanvas.setActiveObject(newShape); fabricCanvas.renderAll();
-      const newObjData = { id: newId, type: objData.type, name: `${shapeDef.label}_${count}`, fill: fillColor };
+      const newObjData = {
+        id: newId, type: objData.type, name: `${shapeDef.label}_${count}`, fill: fillColor,
+        outlineWidth: srcOutlineWidth, outlineColor: srcOutlineColor,
+      };
       if (shapeDef.renderMode === 'svg') newObjData.svgPath = shapeDef.svgPath;
       setCanvasObjects(prev => [...prev, newObjData]);
       setKeyframes(prev => ({ ...prev, [newId]: [] }));
@@ -229,11 +416,137 @@ const Toolbar = () => {
     }
   };
 
+  // ===== GROUP DUPLICATION =====
+  // Async: pre-loads all image children before assembling the group,
+  // so fabric.Image objects have their <img> elements ready.
+  const duplicateGroup = async (groupObjData, fabricGroup, newGroupId, offset) => {
+    if (!fabricGroup._objects || fabricGroup._objects.length === 0) return;
+
+    const newChildObjDataEntries = [];
+    const fillsToCreate = [];
+
+    // Build an array of Promises — one per child.
+    // Non-image children resolve synchronously; image children resolve once loaded.
+    const childPromises = fabricGroup._objects.map((fc, idx) => {
+      const childObjData = canvasObjects.find(o => o.id === fc.id);
+      const newChildId = `element_${Date.now()}_${idx}`;
+
+      // ---- IMAGE CHILD: load the <img> element first ----
+      if (fc.type === 'image') {
+        return new Promise((resolve) => {
+          const dataURL = childObjData?.imageDataURL || fc.getSrc?.() || '';
+          if (!dataURL) { resolve(null); return; }
+          const imgEl = new Image();
+          imgEl.onload = () => {
+            const newImg = new fabric.Image(imgEl, {
+              id: newChildId,
+              left: fc.left || 0,
+              top: fc.top || 0,
+              scaleX: fc.scaleX || 1,
+              scaleY: fc.scaleY || 1,
+              angle: fc.angle || 0,
+              opacity: fc.opacity ?? 1,
+              originX: fc.originX || 'center',
+              originY: fc.originY || 'center',
+            });
+            const childData = buildChildObjData(childObjData, newChildId);
+            if (childData) newChildObjDataEntries.push(childData);
+            resolve({ fabricObj: newImg, childId: newChildId });
+          };
+          imgEl.onerror = () => { resolve(null); };
+          imgEl.src = dataURL;
+        });
+      }
+
+      // ---- NON-IMAGE CHILD: clone synchronously ----
+      const clonedFabric = cloneFabricChild(fc, newChildId);
+      if (!clonedFabric) return Promise.resolve(null);
+
+      const childData = buildChildObjData(childObjData, newChildId);
+      if (childData) {
+        // Clone paint bucket fills for path children
+        if (childObjData?.type === 'path' && childObjData.fills && childObjData.fills.length > 0) {
+          const clonedFills = [];
+          childObjData.fills.forEach((fillData, fIdx) => {
+            const newFillId = `_fill_${Date.now()}_${idx}_${fIdx}`;
+            clonedFills.push({
+              id: newFillId, dataURL: fillData.dataURL,
+              left: fillData.left, top: fillData.top,
+              width: fillData.width, height: fillData.height,
+              color: fillData.color, relLeft: fillData.relLeft, relTop: fillData.relTop,
+            });
+            fillsToCreate.push({
+              fillId: newFillId, parentId: newChildId, dataURL: fillData.dataURL,
+              left: fillData.left, top: fillData.top,
+              width: fillData.width, height: fillData.height,
+              relLeft: fillData.relLeft, relTop: fillData.relTop,
+            });
+          });
+          childData.fills = clonedFills;
+        }
+        newChildObjDataEntries.push(childData);
+      }
+
+      return Promise.resolve({ fabricObj: clonedFabric, childId: newChildId });
+    });
+
+    // Wait for ALL children (including images) to be ready
+    const results = await Promise.all(childPromises);
+    const validResults = results.filter(Boolean);
+    if (validResults.length === 0) return;
+
+    const newChildFabricObjs = validResults.map(r => r.fabricObj);
+    const newChildIds = validResults.map(r => r.childId);
+
+    // Create the new fabric.Group with all children fully loaded
+    const newGroup = new fabric.Group(newChildFabricObjs, {
+      id: newGroupId,
+      left: (fabricGroup.left || 350) + offset,
+      top: (fabricGroup.top || 250) + offset,
+      originX: 'center', originY: 'center',
+      scaleX: fabricGroup.scaleX || 1, scaleY: fabricGroup.scaleY || 1,
+      angle: fabricGroup.angle || 0, opacity: fabricGroup.opacity ?? 1,
+    });
+
+    fabricCanvas.add(newGroup);
+    fabricCanvas.setActiveObject(newGroup);
+    fabricCanvas.renderAll();
+
+    // Create fill images for path children
+    if (fillsToCreate.length > 0) {
+      fillsToCreate.forEach(fillInfo => {
+        const fillImgEl = new Image();
+        fillImgEl.onload = () => {
+          const fillFabricImg = new fabric.Image(fillImgEl, {
+            left: fillInfo.left + offset, top: fillInfo.top + offset,
+            width: fillInfo.width, height: fillInfo.height,
+            originX: 'left', originY: 'top', selectable: false, evented: false, id: fillInfo.fillId,
+          });
+          fillFabricImg._isFill = true; fillFabricImg._parentId = fillInfo.parentId;
+          fillFabricImg._relLeft = fillInfo.relLeft; fillFabricImg._relTop = fillInfo.relTop;
+          fabricCanvas.add(fillFabricImg);
+          try { if (typeof fabricCanvas.sendObjectToBack === 'function') fabricCanvas.sendObjectToBack(fillFabricImg); else if (typeof fabricCanvas.sendToBack === 'function') fabricCanvas.sendToBack(fillFabricImg); } catch (e) {}
+          fabricCanvas.renderAll();
+        };
+        fillImgEl.src = fillInfo.dataURL;
+      });
+    }
+
+    // Update canvasObjects
+    const groupCount = canvasObjects.filter(obj => obj.type === 'group').length + 1;
+    setCanvasObjects(prev => [
+      ...prev,
+      ...newChildObjDataEntries,
+      { id: newGroupId, type: 'group', name: `Group_${groupCount}`, children: newChildIds },
+    ]);
+    setKeyframes(prev => ({ ...prev, [newGroupId]: [] }));
+    setSelectedObject(newGroupId);
+  };
+
+  // All types can be duplicated
   const canDuplicate = React.useMemo(() => {
     if (!selectedObject) return false;
-    const objData = canvasObjects.find(obj => obj.id === selectedObject);
-    if (!objData) return false;
-    return objData.type !== 'group' && objData.type !== 'path';
+    return !!canvasObjects.find(obj => obj.id === selectedObject);
   }, [selectedObject, canvasObjects]);
 
   const groupObjects = () => {
@@ -344,7 +657,6 @@ const Toolbar = () => {
       </Tooltip>
       <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleImageUpload} />
 
-      {/* AUDIO UPLOAD */}
       <Tooltip title={audioFile ? "Replace Audio" : "Upload Audio (BGM)"} placement="right">
         <IconButton onClick={() => audioInputRef.current?.click()} color={audioFile ? "secondary" : "primary"}
           sx={audioFile ? { bgcolor: 'secondary.light', '&:hover': { bgcolor: 'secondary.main', color: 'white' } } : {}}>

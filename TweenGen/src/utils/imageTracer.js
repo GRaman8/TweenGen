@@ -161,3 +161,43 @@ export const createSizedSVG = (svgString, targetWidth, targetHeight) => {
     `style="display:block">` +
     `${innerSVG}</svg>`;
 };
+
+// ===================================================================
+// Canvas preview — rasterize SVG for Fabric.js display
+// ===================================================================
+
+/**
+ * Rasterize a traced SVG string to a PNG data URL at specified dimensions.
+ * 
+ * Used to show the vectorized preview directly on the Fabric.js canvas
+ * so the user sees the stylized result while editing. The canvas always
+ * works with bitmaps internally — this converts the SVG paths into a
+ * rasterized PNG that Fabric.js can display.
+ * 
+ * @param {string} svgString - Full SVG markup from traceImageToSVG
+ * @param {number} targetWidth - Desired width (original image width)
+ * @param {number} targetHeight - Desired height (original image height)
+ * @returns {Promise<string>} PNG data URL of the rasterized vector preview
+ */
+export const rasterizeSVG = (svgString, targetWidth, targetHeight) => {
+  return new Promise((resolve, reject) => {
+    const sizedSVG = createSizedSVG(svgString, targetWidth, targetHeight);
+    const blob = new Blob([sizedSVG], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL('image/png'));
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Failed to rasterize SVG for canvas preview'));
+    };
+    img.src = url;
+  });
+};

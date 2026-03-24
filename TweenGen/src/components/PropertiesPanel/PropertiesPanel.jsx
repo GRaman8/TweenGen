@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Box, Drawer, Typography, TextField, Slider, Divider, Paper, Button, 
+import { Box, Drawer, Typography, TextField, Slider, Divider, Paper, Button, ButtonBase,
   ToggleButton, ToggleButtonGroup, CircularProgress, Select, MenuItem, FormControl, InputLabel } from '@mui/material';
 import DrawingSettings from '../Toolbar/DrawingSettings';
 import { 
@@ -9,7 +9,7 @@ import {
   useFillToolActive, useFillToolColor,
 } from '../../store/hooks';
 import { findFabricObjectById, extractPropertiesFromFabricObject } from '../../utils/fabricHelpers';
-import { traceImageToSVG, TRACE_PRESETS, createSizedSVG } from '../../utils/imageTracer';
+import { traceImageToSVG, TRACE_PRESETS, createSizedSVG, rasterizeSVG } from '../../utils/imageTracer';
 
 // All types that have a fill/color property (not paths, groups, or images)
 const FILL_TYPES = new Set([
@@ -17,6 +17,15 @@ const FILL_TYPES = new Set([
   'triangle', 'diamond', 'pentagon', 'hexagon',
   'star', 'arrow', 'heart', 'cross', 'text',
 ]);
+
+// Outline width options matching MS Paint style
+const OUTLINE_WIDTH_OPTIONS = [
+  { value: 0, label: 'None', height: 0 },
+  { value: 1, label: '1px', height: 1 },
+  { value: 3, label: '3px', height: 3 },
+  { value: 5, label: '5px', height: 5 },
+  { value: 8, label: '8px', height: 8 },
+];
 
 const PropertiesPanel = () => {
   const [selectedObject] = useSelectedObject();
@@ -113,19 +122,110 @@ const PropertiesPanel = () => {
     ));
   };
 
+  // ==================== OUTLINE HANDLERS ====================
+
+  const getCurrentOutlineWidth = () => {
+    if (!selectedObject || !fabricCanvas) return 0;
+    const fo = findFabricObjectById(fabricCanvas, selectedObject);
+    if (fo?.strokeWidth && fo?.stroke) return fo.strokeWidth;
+    return objectData?.outlineWidth || 0;
+  };
+
+  const getCurrentOutlineColor = () => {
+    if (!selectedObject || !fabricCanvas) return '#000000';
+    const fo = findFabricObjectById(fabricCanvas, selectedObject);
+    if (fo?.stroke && typeof fo.stroke === 'string' && fo.stroke.length > 0) return fo.stroke;
+    return objectData?.outlineColor || '#000000';
+  };
+
+  const handleOutlineWidthChange = (width) => {
+    if (!selectedObject || !fabricCanvas) return;
+    const fo = findFabricObjectById(fabricCanvas, selectedObject);
+    if (!fo) return;
+    const color = width > 0 ? getCurrentOutlineColor() : null;
+    fo.set({ strokeWidth: width, stroke: color });
+    fabricCanvas.renderAll();
+    setCanvasObjects(prev => prev.map(obj =>
+      obj.id === selectedObject
+        ? { ...obj, outlineWidth: width, outlineColor: color }
+        : obj
+    ));
+  };
+
+  const handleOutlineColorChange = (e) => {
+    if (!selectedObject || !fabricCanvas) return;
+    const fo = findFabricObjectById(fabricCanvas, selectedObject);
+    if (!fo) return;
+    const newColor = e.target.value;
+    fo.set('stroke', newColor);
+    fabricCanvas.renderAll();
+    setCanvasObjects(prev => prev.map(obj =>
+      obj.id === selectedObject ? { ...obj, outlineColor: newColor } : obj
+    ));
+  };
+
   // ==================== SVG TRACING HANDLERS ====================
+
+  /**
+   * Swap the fabric canvas image between bitmap (original) and vector (traced) preview.
+   */
+  const swapCanvasImageToVector = useCallback(async (svgString, objData) => {
+    if (!fabricCanvas || !selectedObject || !objData) return;
+    const fo = findFabricObjectById(fabricCanvas, selectedObject);
+    if (!fo) return;
+    try {
+      const vectorPreviewURL = await rasterizeSVG(svgString, objData.imageWidth || 100, objData.imageHeight || 100);
+      // Store the vector preview URL on the object for later restoration
+      setCanvasObjects(prev => prev.map(obj =>
+        obj.id === selectedObject ? { ...obj, vectorPreviewURL } : obj
+      ));
+      // Swap the fabric image element
+      const newImg = new Image();
+      newImg.onload = () => {
+        fo.setElement(newImg);
+        fo.setCoords();
+        fabricCanvas.renderAll();
+      };
+      newImg.src = vectorPreviewURL;
+    } catch (err) {
+      console.error('Failed to rasterize SVG for canvas preview:', err);
+    }
+  }, [fabricCanvas, selectedObject, setCanvasObjects]);
+
+  const swapCanvasImageToBitmap = useCallback((objData) => {
+    if (!fabricCanvas || !selectedObject || !objData?.imageDataURL) return;
+    const fo = findFabricObjectById(fabricCanvas, selectedObject);
+    if (!fo) return;
+    const origImg = new Image();
+    origImg.onload = () => {
+      fo.setElement(origImg);
+      fo.setCoords();
+      fabricCanvas.renderAll();
+    };
+    origImg.src = objData.imageDataURL;
+  }, [fabricCanvas, selectedObject]);
 
   const handleExportModeChange = (event, newMode) => {
     if (!newMode || !selectedObject) return;
     setTraceError(null);
+
+    const objData = canvasObjects.find(obj => obj.id === selectedObject);
+
     setCanvasObjects(prev => prev.map(obj =>
       obj.id === selectedObject ? { ...obj, svgExportMode: newMode } : obj
     ));
 
-    // If switching to vector and no trace data exists yet, trigger a trace
-    const objData = canvasObjects.find(obj => obj.id === selectedObject);
-    if (newMode === 'vector' && objData && !objData.svgTracedData) {
-      runTrace(objData.imageDataURL, objData.svgTracePreset || 'detailed');
+    if (newMode === 'vector') {
+      // If switching to vector and no trace data exists yet, trigger a trace
+      if (objData && !objData.svgTracedData) {
+        runTrace(objData.imageDataURL, objData.svgTracePreset || 'detailed');
+      } else if (objData?.svgTracedData) {
+        // Trace data already exists — swap canvas image to vector preview
+        swapCanvasImageToVector(objData.svgTracedData, objData);
+      }
+    } else if (newMode === 'bitmap') {
+      // Switching back to bitmap — restore original image on canvas
+      if (objData) swapCanvasImageToBitmap(objData);
     }
   };
 
@@ -148,19 +248,27 @@ const PropertiesPanel = () => {
     setTraceError(null);
     try {
       const svgString = await traceImageToSVG(dataURL, presetKey);
+
+      const objData = canvasObjects.find(obj => obj.id === selectedObject);
+
       // Update the canvas object with the traced SVG data
       setCanvasObjects(prev => prev.map(obj =>
         obj.id === selectedObject 
           ? { ...obj, svgTracedData: svgString, svgTracePreset: presetKey } 
           : obj
       ));
+
+      // Swap canvas image to show vector preview
+      if (objData) {
+        await swapCanvasImageToVector(svgString, objData);
+      }
     } catch (err) {
       console.error('SVG tracing failed:', err);
       setTraceError(err.message || 'Tracing failed');
     } finally {
       setIsTracing(false);
     }
-  }, [selectedObject, setCanvasObjects]);
+  }, [selectedObject, setCanvasObjects, canvasObjects, swapCanvasImageToVector]);
 
   const handleRetrace = () => {
     const objData = canvasObjects.find(obj => obj.id === selectedObject);
@@ -196,6 +304,10 @@ const PropertiesPanel = () => {
   const svgExportMode = objectData?.svgExportMode || 'bitmap';
   const svgTracePreset = objectData?.svgTracePreset || 'detailed';
   const svgTracedData = objectData?.svgTracedData || null;
+
+  // Current outline values
+  const currentOutlineWidth = isSolidShape ? getCurrentOutlineWidth() : 0;
+  const currentOutlineColor = isSolidShape ? getCurrentOutlineColor() : '#000000';
 
   return (
     <Drawer variant="permanent" anchor="right"
@@ -304,6 +416,76 @@ const PropertiesPanel = () => {
                           size="small" sx={{ width: 60, '& input': { cursor: 'pointer', p: 0.5, height: 36 } }} />
                         <Typography variant="caption" color="text.secondary">{getCurrentFillColor()}</Typography>
                       </Box>
+                    </Box>
+                  </>
+                )}
+
+                {/* ==================== OUTLINE (MS PAINT STYLE) ==================== */}
+                {isSolidShape && (
+                  <>
+                    <Divider />
+                    <Box>
+                      <Typography variant="body2" gutterBottom fontWeight={600}>✏️ Outline</Typography>
+
+                      {/* Width selector — visual line thickness options like MS Paint */}
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0, mb: 1.5,
+                        border: '1px solid', borderColor: 'divider', borderRadius: 1, overflow: 'hidden' }}>
+                        {OUTLINE_WIDTH_OPTIONS.map((opt, idx) => {
+                          const isSelected = currentOutlineWidth === opt.value;
+                          return (
+                            <ButtonBase
+                              key={opt.value}
+                              onClick={() => handleOutlineWidthChange(opt.value)}
+                              sx={{
+                                display: 'flex', alignItems: 'center', gap: 1.5,
+                                px: 1.5, py: 1,
+                                bgcolor: isSelected ? 'primary.main' : 'background.paper',
+                                borderBottom: idx < OUTLINE_WIDTH_OPTIONS.length - 1 ? '1px solid' : 'none',
+                                borderColor: 'divider',
+                                transition: 'background-color 0.15s',
+                                '&:hover': { bgcolor: isSelected ? 'primary.main' : 'action.hover' },
+                              }}
+                            >
+                              <Typography variant="caption" sx={{
+                                minWidth: 32, fontWeight: 600, fontSize: '0.75rem',
+                                color: isSelected ? 'primary.contrastText' : 'text.primary',
+                              }}>
+                                {opt.label}
+                              </Typography>
+                              {opt.value > 0 ? (
+                                <Box sx={{
+                                  flex: 1,
+                                  height: Math.max(opt.height, 1),
+                                  bgcolor: isSelected ? 'primary.contrastText' : currentOutlineColor,
+                                  borderRadius: opt.height >= 5 ? '1px' : 0,
+                                }} />
+                              ) : (
+                                <Typography variant="caption" sx={{
+                                  flex: 1, textAlign: 'center', fontStyle: 'italic',
+                                  color: isSelected ? 'primary.contrastText' : 'text.disabled',
+                                  fontSize: '0.7rem',
+                                }}>
+                                  No outline
+                                </Typography>
+                              )}
+                            </ButtonBase>
+                          );
+                        })}
+                      </Box>
+
+                      {/* Outline color picker — only shown when width > 0 */}
+                      {currentOutlineWidth > 0 && (
+                        <Box>
+                          <Typography variant="body2" gutterBottom sx={{ fontSize: '0.8rem' }}>
+                            Outline Color
+                          </Typography>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <TextField type="color" value={currentOutlineColor} onChange={handleOutlineColorChange}
+                              size="small" sx={{ width: 60, '& input': { cursor: 'pointer', p: 0.5, height: 36 } }} />
+                            <Typography variant="caption" color="text.secondary">{currentOutlineColor}</Typography>
+                          </Box>
+                        </Box>
+                      )}
                     </Box>
                   </>
                 )}

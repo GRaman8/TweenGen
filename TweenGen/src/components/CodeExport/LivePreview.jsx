@@ -73,14 +73,11 @@ const LivePreview = ({ isPreviewVisible = false }) => {
   // ===== PAUSE AUDIO WHEN TAB IS HIDDEN, RESUME WHEN VISIBLE =====
   useEffect(() => {
     if (!isPreviewVisible) {
-      // Tab hidden — pause audio and timeline
       if (audioRef.current) audioRef.current.pause();
       if (timelineRef.current) timelineRef.current.pause();
     } else {
-      // Tab shown — resume timeline (audio will be synced by onUpdate)
       if (timelineRef.current) {
         timelineRef.current.play();
-        // Re-sync audio
         if (audioRef.current) {
           const t = timelineRef.current.time();
           const audioTime = mapAnimTimeToAudioTime(t);
@@ -107,7 +104,6 @@ const LivePreview = ({ isPreviewVisible = false }) => {
     containerRef.current.innerHTML = '';
     if (timelineRef.current) timelineRef.current.kill();
 
-    // Start paused — only play when tab is visible
     timelineRef.current = gsap.timeline({ repeat: -1, paused: true });
 
     const groupChildren = new Set();
@@ -155,7 +151,6 @@ const LivePreview = ({ isPreviewVisible = false }) => {
       tl.eventCallback('onComplete', () => { audio.pause(); });
     }
 
-    // Only auto-play if tab is currently visible
     if (isPreviewVisible) tl.play();
 
     return () => {
@@ -184,6 +179,28 @@ const LivePreview = ({ isPreviewVisible = false }) => {
     }
   };
 
+  /**
+   * Apply outline styles to a preview element based on object data.
+   * CSS shapes get CSS outline, SVG shapes get stroke attrs, text gets -webkit-text-stroke.
+   */
+  const applyOutline = (el, obj, pathEl = null) => {
+    const outlineWidth = obj.outlineWidth || 0;
+    const outlineColor = obj.outlineColor || '#000000';
+    if (outlineWidth <= 0) return;
+
+    if (pathEl) {
+      // SVG shape — apply stroke to the <path> element
+      pathEl.setAttribute('stroke', outlineColor);
+      pathEl.setAttribute('stroke-width', outlineWidth.toString());
+    } else if (obj.type === 'text') {
+      // Text — use -webkit-text-stroke
+      el.style.webkitTextStroke = `${outlineWidth}px ${outlineColor}`;
+    } else {
+      // CSS shape (rect, circle, etc.) — use CSS outline
+      el.style.outline = `${outlineWidth}px solid ${outlineColor}`;
+    }
+  };
+
   const renderSvgShape = (obj, objKfs, allNormalizedKfs) => {
     const container = containerRef.current; const firstKf = objKfs[0];
     const anchorX=obj.anchorX??0.5,anchorY=obj.anchorY??0.5,ew=100,eh=100;
@@ -197,6 +214,8 @@ const LivePreview = ({ isPreviewVisible = false }) => {
     svg.setAttribute('viewBox','0 0 100 100'); svg.setAttribute('width','100%'); svg.setAttribute('height','100%'); svg.style.display='block';
     const pathEl = document.createElementNS('http://www.w3.org/2000/svg','path');
     pathEl.setAttribute('d',obj.svgPath||''); pathEl.setAttribute('fill',fillColor);
+    // Apply outline as SVG stroke
+    applyOutline(wrapper, obj, pathEl);
     svg.appendChild(pathEl); wrapper.appendChild(svg); container.appendChild(wrapper);
     gsap.set(wrapper,{scaleX:firstKf.properties.scaleX,scaleY:firstKf.properties.scaleY,rotation:firstKf.properties.rotation,opacity:firstKf.properties.opacity});
     animateElement(wrapper,objKfs,allNormalizedKfs,anchorX,anchorY,ew,eh,pathEl,'fill');
@@ -212,6 +231,8 @@ const LivePreview = ({ isPreviewVisible = false }) => {
     else if(obj.type==='roundedRect'){el.style.width=ew+'px';el.style.height=eh+'px';el.style.borderRadius='16px';el.style.backgroundColor=fillColor;}
     else if(obj.type==='ellipse'){eh=76;el.style.width=ew+'px';el.style.height=eh+'px';el.style.borderRadius='50%';el.style.backgroundColor=fillColor;}
     else if(obj.type==='text'){const fo=fabricCanvas?.getObjects().find(o=>o.id===obj.id);el.textContent=fo?.text||obj.textContent||'Text';el.style.fontSize='24px';el.style.color=fillColor;el.style.whiteSpace='nowrap';}
+    // Apply outline
+    applyOutline(el, obj);
     el.style.transformOrigin=`${anchorX*100}% ${anchorY*100}%`;
     el.style.zIndex=(firstKf.properties.zIndex??0).toString();
     el.style.left=(firstKf.properties.x-anchorX*ew)+'px'; el.style.top=(firstKf.properties.y-anchorY*eh)+'px';
