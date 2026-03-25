@@ -1,7 +1,9 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Box, Drawer, Typography, TextField, Slider, Divider, Paper, Button, ButtonBase,
   ToggleButton, ToggleButtonGroup, CircularProgress, Select, MenuItem, FormControl, InputLabel } from '@mui/material';
+import { ZoomIn as ZoomInIcon } from '@mui/icons-material';
 import DrawingSettings from '../Toolbar/DrawingSettings';
+import VectorEditModal from './VectorEditModal';
 import { 
   useSelectedObject, useSelectedObjectProperties, useSelectedObjectDetails,
   useCurrentTime, useKeyframes, useFabricCanvas, useDrawingMode,
@@ -44,6 +46,7 @@ const PropertiesPanel = () => {
   // SVG tracing state
   const [isTracing, setIsTracing] = useState(false);
   const [traceError, setTraceError] = useState(null);
+  const [vectorEditOpen, setVectorEditOpen] = useState(false);
 
   const drawerWidth = 300;
 
@@ -277,6 +280,33 @@ const PropertiesPanel = () => {
     }
   };
 
+  /**
+   * Called when the VectorEditModal saves.
+   * Updates the svgTracedData with injected paths and refreshes the canvas preview.
+   */
+  const handleVectorEditSave = useCallback(({ svgTracedData: updatedSVG, vectorPreviewURL }) => {
+    if (!selectedObject) return;
+    // Update canvasObjects with the new SVG data
+    setCanvasObjects(prev => prev.map(obj =>
+      obj.id === selectedObject
+        ? { ...obj, svgTracedData: updatedSVG, vectorPreviewURL: vectorPreviewURL || obj.vectorPreviewURL }
+        : obj
+    ));
+    // Swap the canvas image to the updated vector preview
+    if (vectorPreviewURL && fabricCanvas) {
+      const fo = findFabricObjectById(fabricCanvas, selectedObject);
+      if (fo) {
+        const newImg = new Image();
+        newImg.onload = () => {
+          fo.setElement(newImg);
+          fo.setCoords();
+          fabricCanvas.renderAll();
+        };
+        newImg.src = vectorPreviewURL;
+      }
+    }
+  }, [selectedObject, setCanvasObjects, fabricCanvas]);
+
   // ==================== COMPUTED VALUES ====================
 
   const objectData = canvasObjects.find(obj => obj.id === selectedObject);
@@ -310,6 +340,7 @@ const PropertiesPanel = () => {
   const currentOutlineColor = isSolidShape ? getCurrentOutlineColor() : '#000000';
 
   return (
+    <>
     <Drawer variant="permanent" anchor="right"
       sx={{ width: drawerWidth, flexShrink: 0,
         '& .MuiDrawer-paper': { width: drawerWidth, boxSizing: 'border-box', position: 'relative', height: '100%' } }}>
@@ -601,6 +632,21 @@ const PropertiesPanel = () => {
                             </Paper>
                           )}
 
+                          {/* Edit Vector Details — zoom-in editor */}
+                          {svgTracedData && !isTracing && (
+                            <Button
+                              variant="outlined"
+                              size="small"
+                              fullWidth
+                              startIcon={<ZoomInIcon />}
+                              onClick={() => setVectorEditOpen(true)}
+                              color="secondary"
+                              sx={{ mb: 1.5, textTransform: 'none' }}
+                            >
+                              Edit Vector Details (Zoom)
+                            </Button>
+                          )}
+
                           {/* Side-by-side comparison */}
                           {svgTracedData && !isTracing && (
                             <Paper variant="outlined" sx={{ p: 1.5, bgcolor: '#fafafa' }}>
@@ -700,6 +746,16 @@ const PropertiesPanel = () => {
         )}
       </Box>
     </Drawer>
+      {/* Vector Edit Modal — zoom-in editor for vector images */}
+      {isImage && svgTracedData && (
+        <VectorEditModal
+          open={vectorEditOpen}
+          onClose={() => setVectorEditOpen(false)}
+          objectData={objectData}
+          onSave={handleVectorEditSave}
+        />
+      )}
+    </>
   );
 };
 
