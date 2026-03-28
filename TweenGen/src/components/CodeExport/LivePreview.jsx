@@ -6,6 +6,7 @@ import { useAudioFile, useAudioVolume, useAudioMuted, useAudioRegion } from '../
 import { normalizeKeyframeRotations, findSurroundingKeyframes } from '../../utils/interpolation';
 import { SVG_SHAPE_KEYS } from '../../utils/shapeDefinitions';
 import { createSizedSVG } from '../../utils/imageTracer';
+import { interpolatePathStrings } from '../../utils/pathUtils';
 import { CANVAS_WIDTH, CANVAS_HEIGHT } from '../Canvas/Canvas';
 
 const fabricPathToSVGPath = (pathArray) => {
@@ -122,6 +123,7 @@ const LivePreview = ({ isPreviewVisible = false }) => {
       if (obj.type === 'group') renderGroup(obj, objKfs, allNormalizedKfs);
       else if (obj.type === 'path') renderPath(obj, objKfs, allNormalizedKfs);
       else if (obj.type === 'image') renderImage(obj, objKfs, allNormalizedKfs);
+      else if (obj.deformedPath) renderDeformedShape(obj, objKfs, allNormalizedKfs);
       else if (SVG_SHAPE_KEYS.has(obj.type)) renderSvgShape(obj, objKfs, allNormalizedKfs);
       else renderRegular(obj, objKfs, allNormalizedKfs);
     });
@@ -288,6 +290,133 @@ const LivePreview = ({ isPreviewVisible = false }) => {
     else if(fc.type==='circle'){const r=fc.radius||50;cw=r*2*scaleX;ch=r*2*scaleY;el.style.width=cw+'px';el.style.height=ch+'px';el.style.borderRadius='50%';el.style.backgroundColor=fillColor||'#ef4444';}
     else if(fc.type==='text'){el.textContent=fc.text||'Text';el.style.fontSize=((fc.fontSize||24)*scaleY)+'px';el.style.color=fillColor||'#000';el.style.whiteSpace='nowrap';cw=(fc.width||50)*scaleX;ch=(fc.height||24)*scaleY;}
     el.style.left=(relLeft-cw/2)+'px';el.style.top=(relTop-ch/2)+'px';if(angle)el.style.transform=`rotate(${angle}deg)`;parentEl.appendChild(el);
+  };
+
+  /**
+   * Render a deformed shape using the same wrapper approach as freehand paths.
+   * Uses a 0×0 wrapper div at (x,y) with an SVG that translates by -pathOffset.
+   * This exactly mirrors how fabric.Path positions internally, avoiding the
+   * center-point mismatch that occurs with the 100×100 div approach.
+   */
+  const renderDeformedShape = (obj, objKfs, allNormalizedKfs) => {
+    const container = containerRef.current; const timeline = timelineRef.current;
+    const fo = fabricCanvas?.getObjects().find(o => o.id === obj.id);
+    const firstKf = objKfs[0];
+    const fillColor = firstKf.properties.fill || obj.fill || '#000000';
+
+    // Get pathOffset and dimensions from stored data or live fabric object
+    const pathOffsetX = fo?.pathOffset?.x || obj.deformedPathOffsetX || 50;
+    const pathOffsetY = fo?.pathOffset?.y || obj.deformedPathOffsetY || 50;
+    const width = fo?.width || obj.deformedPathWidth || 100;
+    const height = fo?.height || obj.deformedPathHeight || 100;
+    const anchorX = obj.anchorX ?? 0.5;
+    const anchorY = obj.anchorY ?? 0.5;
+
+    // Translation offset — same formula as renderPath
+    const transX = pathOffsetX + (anchorX - 0.5) * width;
+    const transY = pathOffsetY + (anchorY - 0.5) * height;
+
+    // Wrapper div at exact (x, y) — 0×0 with overflow visible
+    const wrapper = document.createElement('div');
+    wrapper.id = obj.id;
+    wrapper.style.position = 'absolute';
+    wrapper.style.left = firstKf.properties.x + 'px';
+    wrapper.style.top = firstKf.properties.y + 'px';
+    wrapper.style.width = '0px';
+    wrapper.style.height = '0px';
+    wrapper.style.overflow = 'visible';
+    wrapper.style.transformOrigin = '0px 0px';
+    wrapper.style.zIndex = (firstKf.properties.zIndex ?? 0).toString();
+
+    // SVG with translated <g> to align path coordinates to wrapper origin
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.style.position = 'absolute';
+    svg.style.left = '0px';
+    svg.style.top = '0px';
+    svg.style.overflow = 'visible';
+    svg.setAttribute('width', '1');
+    svg.setAttribute('height', '1');
+
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('transform', `translate(${-transX},${-transY})`);
+
+    const pathEl = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    pathEl.setAttribute('d', obj.deformedPath);
+    pathEl.setAttribute('fill', fillColor);
+
+    // Apply outline
+    const outlineWidth = obj.outlineWidth || 0;
+    const outlineColor = obj.outlineColor || '#000000';
+    if (outlineWidth > 0) {
+      pathEl.setAttribute('stroke', outlineColor);
+      pathEl.setAttribute('stroke-width', outlineWidth.toString());
+    }
+
+    g.appendChild(pathEl);
+    svg.appendChild(g);
+    wrapper.appendChild(svg);
+    container.appendChild(wrapper);
+
+    gsap.set(wrapper, {
+      scaleX: firstKf.properties.scaleX,
+      scaleY: firstKf.properties.scaleY,
+      rotation: firstKf.properties.rotation,
+      opacity: firstKf.properties.opacity,
+    });
+
+    // Animate using direct (x, y) positioning — same as renderPath
+    for (let i = 1; i < objKfs.length; i++) {
+      const prev = objKfs[i - 1];
+      const curr = objKfs[i];
+      const dur = curr.time - prev.time;
+      const ease = curr.easing || 'none';
+      const gs = findGlobalZSwapForSegment(allNormalizedKfs, prev.time, curr.time);
+
+      // Position, scale, rotation, opacity tween
+      timeline.to(wrapper, {
+        duration: dur,
+        left: curr.properties.x + 'px',
+        top: curr.properties.y + 'px',
+        scaleX: curr.properties.scaleX,
+        scaleY: curr.properties.scaleY,
+        rotation: curr.properties.rotation,
+        opacity: curr.properties.opacity,
+        ease: ease,
+      }, prev.time);
+
+      addZSwapTween(timeline, wrapper, prev, curr, gs);
+
+      // Fill color animation
+      const prevFill = prev.properties.fill;
+      const currFill = curr.properties.fill;
+      if (prevFill && currFill && prevFill !== currFill) {
+        timeline.to(pathEl, {
+          duration: dur,
+          attr: { fill: currFill },
+          ease: ease,
+        }, prev.time);
+      }
+
+      // Path morphing animation (e.g., triangle → cone)
+      // Uses a dummy { t } object animated from 0→1, with onUpdate
+      // interpolating the SVG path string each frame.
+      const prevPath = prev.properties.deformedPath;
+      const currPath = curr.properties.deformedPath;
+      if (prevPath && currPath && prevPath !== currPath) {
+        const morphProgress = { t: 0 };
+        timeline.to(morphProgress, {
+          t: 1,
+          duration: dur,
+          ease: ease,
+          onUpdate: () => {
+            const interpolatedD = interpolatePathStrings(
+              prevPath, currPath, morphProgress.t
+            );
+            pathEl.setAttribute('d', interpolatedD);
+          },
+        }, prev.time);
+      }
+    }
   };
 
   const renderPath = (obj, objKfs, allNormalizedKfs) => {

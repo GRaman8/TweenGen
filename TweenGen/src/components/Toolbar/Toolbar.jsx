@@ -391,6 +391,44 @@ const Toolbar = () => {
       // ===== GROUP DUPLICATION =====
       duplicateGroup(objData, fo, newId, offset).catch(err => console.error('Group duplication failed:', err));
 
+    } else if (objData.convertedToPath && objData.deformedPath) {
+      // ===== DEFORMED SHAPE DUPLICATION =====
+      // After deformation, the fabric object is a fabric.Path — duplicate it as such
+      const pathString = fabricPathToSVGPathString(fo.path) || objData.deformedPath;
+      const fillColor = fo.fill || objData.fill || '#000000';
+      const newPath = new fabric.Path(pathString, {
+        id: newId,
+        left: (fo.left || 350) + offset,
+        top: (fo.top || 250) + offset,
+        originX: 'center', originY: 'center',
+        scaleX: fo.scaleX || 1, scaleY: fo.scaleY || 1,
+        angle: fo.angle || 0, opacity: fo.opacity ?? 1,
+        fill: fillColor,
+        stroke: srcStroke, strokeWidth: srcStrokeWidth,
+      });
+      fabricCanvas.add(newPath);
+      fabricCanvas.setActiveObject(newPath);
+      fabricCanvas.renderAll();
+
+      const shapeDef = getShapeDef(objData.type);
+      const newObjData = {
+        id: newId, type: objData.type,
+        name: `${shapeDef?.label || objData.type}_${count}`,
+        fill: fillColor,
+        outlineWidth: srcOutlineWidth, outlineColor: srcOutlineColor,
+        // Copy deformation data
+        deformedPath: objData.deformedPath,
+        convertedToPath: true,
+        deformedPathOffsetX: newPath.pathOffset?.x || objData.deformedPathOffsetX,
+        deformedPathOffsetY: newPath.pathOffset?.y || objData.deformedPathOffsetY,
+        deformedPathWidth: newPath.width || objData.deformedPathWidth,
+        deformedPathHeight: newPath.height || objData.deformedPathHeight,
+      };
+      if (objData.svgPath) newObjData.svgPath = objData.svgPath;
+      setCanvasObjects(prev => [...prev, newObjData]);
+      setKeyframes(prev => ({ ...prev, [newId]: [] }));
+      setSelectedObject(newId);
+
     } else {
       // ===== SOLID SHAPES =====
       const shapeDef = getShapeDef(objData.type);
