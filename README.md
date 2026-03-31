@@ -456,9 +456,7 @@ Hide a track via the eye icon to remove it from both the timeline and the canvas
 
 Click **Export Code** to see generated HTML/CSS/JS. When audio is present, downloads 4 files (including the original audio). The exported code includes a click-to-start overlay for browser autoplay policy compliance, and audio sync with GSAP's `onUpdate` callback using the trim region mapping.
 
----
-
-## How the Export Works
+### Shape Rendering, Coordinate Translation, Path Export, Z-Index Animation, and Easing Mapping
 
 ### Color Animation in Exports
 

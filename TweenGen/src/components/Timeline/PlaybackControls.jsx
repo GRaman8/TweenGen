@@ -184,9 +184,7 @@ const PlaybackControls = () => {
 
   const handleStop = useCallback(() => {
     setIsPlaying(false);
-    if (animationFrameRef.current) {
-      cancelAnimationFrame(animationFrameRef.current);
-    }
+    if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
     setCurrentTime(0);
     setSelectedKeyframe(null);
     if (audioRef.current) {
@@ -203,34 +201,25 @@ const PlaybackControls = () => {
     const allKeyframeTimes = [];
     Object.values(keyframes).forEach(objKeyframes => {
       objKeyframes.forEach(kf => {
-        if (!allKeyframeTimes.includes(kf.time)) {
-          allKeyframeTimes.push(kf.time);
-        }
+        if (!allKeyframeTimes.includes(kf.time)) allKeyframeTimes.push(kf.time);
       });
     });
     allKeyframeTimes.sort((a, b) => a - b);
     const previousTimes = allKeyframeTimes.filter(t => t < currentTime - 0.01);
-    if (previousTimes.length > 0) {
-      setCurrentTime(previousTimes[previousTimes.length - 1]);
-    } else {
-      setCurrentTime(0);
-    }
+    if (previousTimes.length > 0) setCurrentTime(previousTimes[previousTimes.length - 1]);
+    else setCurrentTime(0);
   };
 
   const handleStepNext = () => {
     const allKeyframeTimes = [];
     Object.values(keyframes).forEach(objKeyframes => {
       objKeyframes.forEach(kf => {
-        if (!allKeyframeTimes.includes(kf.time)) {
-          allKeyframeTimes.push(kf.time);
-        }
+        if (!allKeyframeTimes.includes(kf.time)) allKeyframeTimes.push(kf.time);
       });
     });
     allKeyframeTimes.sort((a, b) => a - b);
     const nextTimes = allKeyframeTimes.filter(t => t > currentTime + 0.01);
-    if (nextTimes.length > 0) {
-      setCurrentTime(nextTimes[0]);
-    }
+    if (nextTimes.length > 0) setCurrentTime(nextTimes[0]);
   };
 
   /**
@@ -243,10 +232,8 @@ const PlaybackControls = () => {
   const buildKeyframeForObject = useCallback((objectId) => {
     if (!fabricCanvas || !objectId) return null;
     if (lockedTracks[objectId]) return null;
-
     const fabricObject = findFabricObjectById(fabricCanvas, objectId);
     if (!fabricObject) return null;
-
     const properties = extractPropertiesFromFabricObject(fabricObject);
     if (!properties) return null;
 
@@ -304,12 +291,8 @@ const PlaybackControls = () => {
       let lockedCount = 0;
       activeObjects.forEach(fo => {
         if (fo?.id) {
-          if (lockedTracks[fo.id]) {
-            lockedCount++;
-          } else {
-            const entry = buildKeyframeForObject(fo.id);
-            if (entry) entries.push(entry);
-          }
+          if (lockedTracks[fo.id]) lockedCount++;
+          else { const entry = buildKeyframeForObject(fo.id); if (entry) entries.push(entry); }
         }
       });
       if (entries.length > 0) {
@@ -332,7 +315,6 @@ const PlaybackControls = () => {
       setSnackMessage('This track is locked. Unlock it to add keyframes.');
       return;
     }
-
     const entry = buildKeyframeForObject(selectedObject);
     if (entry) {
       batchAddKeyframes([entry]);
@@ -346,12 +328,8 @@ const PlaybackControls = () => {
     const entries = [];
     let lockedCount = 0;
     canvasObjects.forEach(obj => {
-      if (lockedTracks[obj.id]) {
-        lockedCount++;
-      } else {
-        const entry = buildKeyframeForObject(obj.id);
-        if (entry) entries.push(entry);
-      }
+      if (lockedTracks[obj.id]) lockedCount++;
+      else { const entry = buildKeyframeForObject(obj.id); if (entry) entries.push(entry); }
     });
     if (entries.length > 0) {
       batchAddKeyframes(entries);
@@ -370,11 +348,7 @@ const PlaybackControls = () => {
   };
 
   useEffect(() => {
-    return () => {
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
-    };
+    return () => { if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current); };
   }, []);
 
   const isObjectLocked = selectedObject && !!lockedTracks[selectedObject];
@@ -387,9 +361,7 @@ const PlaybackControls = () => {
     <Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1, flexWrap: 'wrap' }}>
         <Tooltip title="Previous Keyframe">
-          <IconButton onClick={handleStepPrevious} size="small">
-            <SkipPrevious />
-          </IconButton>
+          <IconButton onClick={handleStepPrevious} size="small"><SkipPrevious /></IconButton>
         </Tooltip>
         <IconButton onClick={handlePlay} disabled={isPlaying} color="primary">
           <PlayArrow />
@@ -401,9 +373,7 @@ const PlaybackControls = () => {
           <Stop />
         </IconButton>
         <Tooltip title="Next Keyframe">
-          <IconButton onClick={handleStepNext} size="small">
-            <SkipNext />
-          </IconButton>
+          <IconButton onClick={handleStepNext} size="small"><SkipNext /></IconButton>
         </Tooltip>
         
         <Typography variant="body2" sx={{ ml: 1, minWidth: 110, fontSize: '0.8rem' }}>
@@ -426,15 +396,9 @@ const PlaybackControls = () => {
           />
         </Tooltip>
 
-        <TextField
-          label="Duration (s)"
-          type="number"
-          value={duration}
+        <TextField label="Duration (s)" type="number" value={duration}
           onChange={(e) => setDuration(Math.max(1, parseFloat(e.target.value) || 10))}
-          size="small"
-          sx={{ width: 100, ml: 'auto' }}
-          inputProps={{ step: 0.5, min: 1 }}
-        />
+          size="small" sx={{ width: 100, ml: 'auto' }} inputProps={{ step: 0.5, min: 1 }} />
         
         <Tooltip title={
           isMultiSelect
@@ -449,8 +413,7 @@ const PlaybackControls = () => {
               size="small"
               onClick={handleAddKeyframe}
               disabled={!canAddKeyframe || (!!isObjectLocked && !isMultiSelect)}
-              color={isMultiSelect ? "secondary" : isObjectLocked ? "inherit" : "primary"}
-            >
+              color={isMultiSelect ? "secondary" : isObjectLocked ? "inherit" : "primary"}>
               {isMultiSelect ? `Add Keyframe (${activeObjectCount})` : 'Add Keyframe'}
             </Button>
           </span>
@@ -458,28 +421,17 @@ const PlaybackControls = () => {
 
         <Tooltip title="Add keyframe for EVERY object on canvas at current time — ideal for character animation">
           <span>
-            <Button
-              variant="outlined"
-              size="small"
-              onClick={handleKeyframeAll}
-              disabled={!hasAnyObjects}
-              color="primary"
-            >
+            <Button variant="outlined" size="small" onClick={handleKeyframeAll}
+              disabled={!hasAnyObjects} color="primary">
               ⏺ Keyframe All
             </Button>
           </span>
         </Tooltip>
       </Box>
 
-      <Snackbar
-        open={!!snackMessage}
-        autoHideDuration={3000}
-        onClose={() => setSnackMessage('')}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-      >
-        <Alert severity={snackSeverity} onClose={() => setSnackMessage('')}>
-          {snackMessage}
-        </Alert>
+      <Snackbar open={!!snackMessage} autoHideDuration={3000} onClose={() => setSnackMessage('')}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
+        <Alert severity={snackSeverity} onClose={() => setSnackMessage('')}>{snackMessage}</Alert>
       </Snackbar>
     </Box>
   );

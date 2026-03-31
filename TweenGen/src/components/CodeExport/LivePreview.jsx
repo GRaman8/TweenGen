@@ -96,6 +96,38 @@ const LivePreview = ({ isPreviewVisible = false }) => {
     return audioRegion.start + ratio * regionDur;
   };
 
+  // ===== PAUSE AUDIO WHEN TAB IS HIDDEN, RESUME WHEN VISIBLE =====
+  useEffect(() => {
+    if (!isPreviewVisible) {
+      // Tab hidden — pause audio and timeline
+      if (audioRef.current) audioRef.current.pause();
+      if (timelineRef.current) timelineRef.current.pause();
+    } else {
+      // Tab shown — resume timeline (audio will be synced by onUpdate)
+      if (timelineRef.current) {
+        timelineRef.current.play();
+        // Re-sync audio
+        if (audioRef.current) {
+          const t = timelineRef.current.time();
+          const audioTime = mapAnimTimeToAudioTime(t);
+          audioRef.current.currentTime = Math.min(audioTime, audioRef.current.duration || Infinity);
+          audioRef.current.play().catch(() => {});
+        }
+      }
+    }
+  }, [isPreviewVisible]);
+
+  // Map animation time to audio time using region
+  const mapAnimTimeToAudioTime = (animTime) => {
+    const audioDur = audioFile?.duration || 0;
+    if (!audioRegion) return Math.min(animTime, audioDur);
+    const regionDur = audioRegion.end - audioRegion.start;
+    if (regionDur <= 0 || duration <= 0) return audioRegion.start;
+    const ratio = animTime / duration;
+    return audioRegion.start + ratio * regionDur;
+  };
+
+  // ===== BUILD GSAP TIMELINE =====
   useEffect(() => {
     if (!containerRef.current) return;
     containerRef.current.innerHTML = '';
