@@ -53,16 +53,6 @@ export const lerpColor = (color1, color2, t) => {
 /**
  * Color interpolation helpers
  */
-const hexToRgb = (hex) => {
-  if (!hex || typeof hex !== 'string') return null;
-  const clean = hex.replace('#', '');
-  if (clean.length !== 6) return null;
-  const r = parseInt(clean.substring(0, 2), 16);
-  const g = parseInt(clean.substring(2, 4), 16);
-  const b = parseInt(clean.substring(4, 6), 16);
-  if (isNaN(r) || isNaN(g) || isNaN(b)) return null;
-  return { r, g, b };
-};
 
 const rgbToHex = (r, g, b) => {
   return '#' + [r, g, b]
