@@ -51,7 +51,8 @@ const findGlobalZSwapForSegment = (allNormalizedKfs, prevTime, currTime) => {
 };
 
 const generateZSwapCode = (selector, prev, curr, globalSwapPoint) => {
-  const prevZ = prev.properties.zIndex ?? 0, currZ = curr.properties.zIndex ?? 0;
+  const prevZ = prev.properties.zIndex ?? 0;
+  const currZ = curr.properties.zIndex ?? 0;
   if (prevZ === currZ) return '';
 
   const swapTime = prev.time + (curr.time - prev.time) * globalSwapPoint;
@@ -329,10 +330,16 @@ const generateJavaScript = (
   });
 
   const allNormalizedKfs = {};
-  canvasObjects.forEach(obj => { if (groupChildren.has(obj.id)) return; const rawKfs = keyframes[obj.id]||[]; if (rawKfs.length===0) return; allNormalizedKfs[obj.id] = normalizeKeyframeRotations(rawKfs); });
+  canvasObjects.forEach(obj => {
+    if (groupChildren.has(obj.id)) return;
+    const rawKfs = keyframes[obj.id] || [];
+    if (rawKfs.length === 0) return;
+    allNormalizedKfs[obj.id] = normalizeKeyframeRotations(rawKfs);
+  });
 
   canvasObjects.forEach(obj => {
-    const objKfs = allNormalizedKfs[obj.id]; if (!objKfs || objKfs.length===0 || groupChildren.has(obj.id)) return;
+    const objKfs = allNormalizedKfs[obj.id];
+    if (!objKfs || objKfs.length === 0 || groupChildren.has(obj.id)) return;
     const firstKf = objKfs[0];
 
     if (obj.type === 'group') {
@@ -383,9 +390,6 @@ const generateJavaScript = (
 // ===================================================================
 // Audio setup code
 // ===================================================================
-const generateSvgShapeCreation = (obj,firstKf) => { const ax=obj.anchorX??0.5,ay=obj.anchorY??0.5,ew=100,eh=100,z=firstKf.properties.zIndex??0; const fillColor = firstKf.properties.fill||obj.fill||'#000000'; return `    // Create ${obj.name} (SVG Shape)\n    const ${obj.id} = document.createElement('div');\n    ${obj.id}.id = '${obj.id}';\n    ${obj.id}.style.position = 'absolute';\n    ${obj.id}.style.width = '${ew}px'; ${obj.id}.style.height = '${eh}px';\n    ${obj.id}.style.transformOrigin = '${(ax*100).toFixed(0)}% ${(ay*100).toFixed(0)}%';\n    ${obj.id}.style.left = '${(firstKf.properties.x-ax*ew).toFixed(2)}px';\n    ${obj.id}.style.top = '${(firstKf.properties.y-ay*eh).toFixed(2)}px';\n    ${obj.id}.style.zIndex = '${z}';\n    ${obj.id}.innerHTML = '<svg viewBox="0 0 100 100" width="100%" height="100%" style="display:block"><path d="${obj.svgPath}" fill="${fillColor}"/></svg>';\n    container.appendChild(${obj.id});\n    gsap.set(${obj.id}, { scaleX: ${firstKf.properties.scaleX.toFixed(2)}, scaleY: ${firstKf.properties.scaleY.toFixed(2)}, rotation: ${firstKf.properties.rotation.toFixed(2)}, opacity: ${firstKf.properties.opacity.toFixed(2)} });\n    \n`; };
-const generateImageCreation = (obj,firstKf) => { const ax=obj.anchorX??0.5,ay=obj.anchorY??0.5,ew=obj.imageWidth||100,eh=obj.imageHeight||100,z=firstKf.properties.zIndex??0; const useVector=obj.svgExportMode==='vector'&&obj.svgTracedData; if(useVector){const{width:traceW,height:traceH,innerSVG}=parseSVGDimensions(obj.svgTracedData);const escapedInner=escapeJSString(innerSVG);return `    // Create ${obj.name} (Vector SVG)\n    const ${obj.id} = document.createElement('div');\n    ${obj.id}.id = '${obj.id}';\n    ${obj.id}.style.position = 'absolute';\n    ${obj.id}.style.width = '${ew}px'; ${obj.id}.style.height = '${eh}px';\n    ${obj.id}.style.transformOrigin = '${(ax*100).toFixed(0)}% ${(ay*100).toFixed(0)}%';\n    ${obj.id}.style.left = '${(firstKf.properties.x-ax*ew).toFixed(2)}px';\n    ${obj.id}.style.top = '${(firstKf.properties.y-ay*eh).toFixed(2)}px';\n    ${obj.id}.style.zIndex = '${z}'; ${obj.id}.style.pointerEvents = 'none';\n    ${obj.id}.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${traceW} ${traceH}" width="${ew}" height="${eh}" preserveAspectRatio="none" style="display:block">${escapedInner}</svg>';\n    container.appendChild(${obj.id});\n    gsap.set(${obj.id}, { scaleX: ${firstKf.properties.scaleX.toFixed(2)}, scaleY: ${firstKf.properties.scaleY.toFixed(2)}, rotation: ${firstKf.properties.rotation.toFixed(2)}, opacity: ${firstKf.properties.opacity.toFixed(2)} });\n    \n`;} return `    // Create ${obj.name} (Bitmap Image)\n    const ${obj.id} = document.createElement('img');\n    ${obj.id}.id = '${obj.id}'; ${obj.id}.src = '${obj.imageDataURL}';\n    ${obj.id}.style.position = 'absolute'; ${obj.id}.style.width = '${ew}px'; ${obj.id}.style.height = '${eh}px';\n    ${obj.id}.style.transformOrigin = '${(ax*100).toFixed(0)}% ${(ay*100).toFixed(0)}%';\n    ${obj.id}.style.left = '${(firstKf.properties.x-ax*ew).toFixed(2)}px';\n    ${obj.id}.style.top = '${(firstKf.properties.y-ay*eh).toFixed(2)}px';\n    ${obj.id}.style.zIndex = '${z}'; ${obj.id}.style.pointerEvents = 'none';\n    container.appendChild(${obj.id});\n    gsap.set(${obj.id}, { scaleX: ${firstKf.properties.scaleX.toFixed(2)}, scaleY: ${firstKf.properties.scaleY.toFixed(2)}, rotation: ${firstKf.properties.rotation.toFixed(2)}, opacity: ${firstKf.properties.opacity.toFixed(2)} });\n    \n`; };
-const generateRegularCreation = (obj,firstKf) => { const ax=obj.anchorX??0.5,ay=obj.anchorY??0.5;let ew=100,eh=100;if(obj.type==='ellipse')eh=76; const fillColor = firstKf.properties.fill||obj.fill||getDefaultFillColor(obj.type); const z=firstKf.properties.zIndex??0; let js=`    // Create ${obj.name}\n    const ${obj.id} = document.createElement('div');\n    ${obj.id}.id = '${obj.id}'; ${obj.id}.style.position = 'absolute';\n    ${obj.id}.style.transformOrigin = '${(ax*100).toFixed(0)}% ${(ay*100).toFixed(0)}%';\n    ${obj.id}.style.left = '${(firstKf.properties.x-ax*ew).toFixed(2)}px';\n    ${obj.id}.style.top = '${(firstKf.properties.y-ay*eh).toFixed(2)}px';\n    ${obj.id}.style.zIndex = '${z}';\n`; if(obj.type==='rectangle') js+=`    ${obj.id}.style.width = '100px'; ${obj.id}.style.height = '100px'; ${obj.id}.style.backgroundColor = '${fillColor}';\n`; else if(obj.type==='circle') js+=`    ${obj.id}.style.width = '100px'; ${obj.id}.style.height = '100px'; ${obj.id}.style.borderRadius = '50%'; ${obj.id}.style.backgroundColor = '${fillColor}';\n`; else if(obj.type==='roundedRect') js+=`    ${obj.id}.style.width = '100px'; ${obj.id}.style.height = '100px'; ${obj.id}.style.borderRadius = '16px'; ${obj.id}.style.backgroundColor = '${fillColor}';\n`; else if(obj.type==='ellipse') js+=`    ${obj.id}.style.width = '100px'; ${obj.id}.style.height = '76px'; ${obj.id}.style.borderRadius = '50%'; ${obj.id}.style.backgroundColor = '${fillColor}';\n`; else if(obj.type==='text') js+=`    ${obj.id}.textContent = '${(obj.textContent||'Text').replace(/'/g,"\\'")}';\n    ${obj.id}.style.fontSize = '24px'; ${obj.id}.style.color = '${fillColor}'; ${obj.id}.style.whiteSpace = 'nowrap';\n`; js+=`    container.appendChild(${obj.id});\n    gsap.set(${obj.id}, { scaleX: ${firstKf.properties.scaleX.toFixed(2)}, scaleY: ${firstKf.properties.scaleY.toFixed(2)}, rotation: ${firstKf.properties.rotation.toFixed(2)}, opacity: ${firstKf.properties.opacity.toFixed(2)} });\n    \n`; return js; };
 
 const generateAudioSetup = (fileName, regionStart, regionEnd, regionDur, duration) => {
   return `    // ===== AUDIO SETUP =====
