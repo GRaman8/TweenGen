@@ -51,31 +51,6 @@ export const lerpColor = (color1, color2, t) => {
 // ===================================================================
 
 /**
- * Color interpolation helpers
- */
-
-const rgbToHex = (r, g, b) => {
-  return '#' + [r, g, b]
-    .map(c => Math.round(Math.max(0, Math.min(255, c))).toString(16).padStart(2, '0'))
-    .join('');
-};
-
-/**
- * Interpolate between two hex color strings.
- * Returns hex string or undefined if either input is invalid.
- */
-export const lerpColor = (color1, color2, t) => {
-  const c1 = hexToRgb(color1);
-  const c2 = hexToRgb(color2);
-  if (!c1 || !c2) return color2 || color1 || undefined;
-  return rgbToHex(
-    lerp(c1.r, c2.r, t),
-    lerp(c1.g, c2.g, t),
-    lerp(c1.b, c2.b, t),
-  );
-};
-
-/**
  * Normalize an angle delta to [-180, 180] so animations take the shortest path.
  */
 const normalizeAngle = (prevAngle, nextAngle) => {
