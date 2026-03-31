@@ -1,15 +1,23 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { Box, Drawer, Typography, TextField, Slider, Divider, Paper, Button, 
-  ToggleButton, ToggleButtonGroup, CircularProgress, Select, MenuItem, FormControl, InputLabel } from '@mui/material';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { Box, Drawer, Typography, TextField, Slider, Divider, Paper, Button, ButtonBase,
+  ToggleButton, ToggleButtonGroup, CircularProgress, Select, MenuItem, FormControl, InputLabel,
+  IconButton, Tooltip } from '@mui/material';
+import { ZoomIn as ZoomInIcon, Timeline as DeformIcon, 
+  AddPhotoAlternate as UploadImageIcon, Delete as DeleteIcon,
+  Wallpaper as WallpaperIcon } from '@mui/icons-material';
 import DrawingSettings from '../Toolbar/DrawingSettings';
+import VectorEditModal from './VectorEditModal';
+import PathDeformModal from './PathDeformModal';
 import { 
   useSelectedObject, useSelectedObjectProperties, useSelectedObjectDetails,
   useCurrentTime, useKeyframes, useFabricCanvas, useDrawingMode,
   useAnchorEditMode, useCanvasObjects, useCanvasBgColor,
-  useFillToolActive, useFillToolColor,
+  useFillToolActive, useFillToolColor, useCanvasBgImage,
 } from '../../store/hooks';
 import { findFabricObjectById, extractPropertiesFromFabricObject } from '../../utils/fabricHelpers';
-import { traceImageToSVG, TRACE_PRESETS, createSizedSVG } from '../../utils/imageTracer';
+import { traceImageToSVG, TRACE_PRESETS, createSizedSVG, rasterizeSVG } from '../../utils/imageTracer';
+import { shapeToSVGPath } from '../../utils/pathUtils';
+import * as fabric from 'fabric';
 
 // All types that have a fill/color property (not paths, groups, or images)
 const FILL_TYPES = new Set([
@@ -18,24 +26,51 @@ const FILL_TYPES = new Set([
   'star', 'arrow', 'heart', 'cross', 'text',
 ]);
 
+// Outline width options matching MS Paint style
+const OUTLINE_WIDTH_OPTIONS = [
+  { value: 0, label: 'None', height: 0 },
+  { value: 1, label: '1px', height: 1 },
+  { value: 3, label: '3px', height: 3 },
+  { value: 5, label: '5px', height: 5 },
+  { value: 8, label: '8px', height: 8 },
+];
+
+const generateShapeSVG = (objData) => {
+  const pathD = objData.deformedPath || shapeToSVGPath(objData.type, objData);
+  const fill = objData.fill || '#000000';
+  const ow = objData.outlineWidth || 0;
+  const oc = objData.outlineColor || '#000000';
+  const strokeAttr = ow > 0 ? ` stroke="${oc}" stroke-width="${ow}"` : '';
+
+  return (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">' +
+    `<path d="${pathD}" fill="${fill}"${strokeAttr}/>` +
+    '</svg>'
+  );
+};
+
 const PropertiesPanel = () => {
   const [selectedObject] = useSelectedObject();
   const [properties, setProperties] = useSelectedObjectProperties();
   const selectedDetails = useSelectedObjectDetails();
   const [currentTime] = useCurrentTime();
-  const [keyframes] = useKeyframes();
+  const [keyframes, setKeyframes] = useKeyframes();
   const [fabricCanvas] = useFabricCanvas();
   const [drawingMode] = useDrawingMode();
   const [anchorEditMode] = useAnchorEditMode();
   const [canvasObjects, setCanvasObjects] = useCanvasObjects();
   const [canvasBgColor, setCanvasBgColor] = useCanvasBgColor();
+  const [canvasBgImage, setCanvasBgImage] = useCanvasBgImage();
   const [fillToolActive] = useFillToolActive();
   const [fillToolColor, setFillToolColor] = useFillToolColor();
 
   // SVG tracing state
   const [isTracing, setIsTracing] = useState(false);
   const [traceError, setTraceError] = useState(null);
+  const [vectorEditOpen, setVectorEditOpen] = useState(false);
+  const [deformModalOpen, setDeformModalOpen] = useState(false);
 
+  const bgImageInputRef = useRef(null);
   const drawerWidth = 300;
 
   useEffect(() => {
@@ -113,19 +148,128 @@ const PropertiesPanel = () => {
     ));
   };
 
+  // ==================== BACKGROUND IMAGE HANDLERS ====================
+  const handleBgImageUpload = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (loadEvent) => {
+      const dataURL = loadEvent.target.result;
+      const imgEl = document.createElement('img');
+      imgEl.onload = () => {
+        setCanvasBgImage({
+          dataURL,
+          width: imgEl.naturalWidth,
+          height: imgEl.naturalHeight,
+          fileName: file.name,
+        });
+      };
+      imgEl.src = dataURL;
+    };
+    reader.readAsDataURL(file);
+    event.target.value = '';
+  };
+
+  const handleRemoveBgImage = () => {
+    setCanvasBgImage(null);
+  };
+
+  // ==================== OUTLINE HANDLERS ====================
+
+  const getCurrentOutlineWidth = () => {
+    if (!selectedObject || !fabricCanvas) return 0;
+    const fo = findFabricObjectById(fabricCanvas, selectedObject);
+    if (fo?.strokeWidth && fo?.stroke) return fo.strokeWidth;
+    return objectData?.outlineWidth || 0;
+  };
+
+  const getCurrentOutlineColor = () => {
+    if (!selectedObject || !fabricCanvas) return '#000000';
+    const fo = findFabricObjectById(fabricCanvas, selectedObject);
+    if (fo?.stroke && typeof fo.stroke === 'string' && fo.stroke.length > 0) return fo.stroke;
+    return objectData?.outlineColor || '#000000';
+  };
+
+  const handleOutlineWidthChange = (width) => {
+    if (!selectedObject || !fabricCanvas) return;
+    const fo = findFabricObjectById(fabricCanvas, selectedObject);
+    if (!fo) return;
+    const color = width > 0 ? getCurrentOutlineColor() : null;
+    fo.set({ strokeWidth: width, stroke: color });
+    fabricCanvas.renderAll();
+    setCanvasObjects(prev => prev.map(obj =>
+      obj.id === selectedObject
+        ? { ...obj, outlineWidth: width, outlineColor: color }
+        : obj
+    ));
+  };
+
+  const handleOutlineColorChange = (e) => {
+    if (!selectedObject || !fabricCanvas) return;
+    const fo = findFabricObjectById(fabricCanvas, selectedObject);
+    if (!fo) return;
+    const newColor = e.target.value;
+    fo.set('stroke', newColor);
+    fabricCanvas.renderAll();
+    setCanvasObjects(prev => prev.map(obj =>
+      obj.id === selectedObject ? { ...obj, outlineColor: newColor } : obj
+    ));
+  };
+
   // ==================== SVG TRACING HANDLERS ====================
+
+  const swapCanvasImageToVector = useCallback(async (svgString, objData) => {
+    if (!fabricCanvas || !selectedObject || !objData) return;
+    const fo = findFabricObjectById(fabricCanvas, selectedObject);
+    if (!fo) return;
+    try {
+      const vectorPreviewURL = await rasterizeSVG(svgString, objData.imageWidth || 100, objData.imageHeight || 100);
+      setCanvasObjects(prev => prev.map(obj =>
+        obj.id === selectedObject ? { ...obj, vectorPreviewURL } : obj
+      ));
+      const newImg = new Image();
+      newImg.onload = () => {
+        fo.setElement(newImg);
+        fo.setCoords();
+        fabricCanvas.renderAll();
+      };
+      newImg.src = vectorPreviewURL;
+    } catch (err) {
+      console.error('Failed to rasterize SVG for canvas preview:', err);
+    }
+  }, [fabricCanvas, selectedObject, setCanvasObjects]);
+
+  const swapCanvasImageToBitmap = useCallback((objData) => {
+    if (!fabricCanvas || !selectedObject || !objData?.imageDataURL) return;
+    const fo = findFabricObjectById(fabricCanvas, selectedObject);
+    if (!fo) return;
+    const origImg = new Image();
+    origImg.onload = () => {
+      fo.setElement(origImg);
+      fo.setCoords();
+      fabricCanvas.renderAll();
+    };
+    origImg.src = objData.imageDataURL;
+  }, [fabricCanvas, selectedObject]);
 
   const handleExportModeChange = (event, newMode) => {
     if (!newMode || !selectedObject) return;
     setTraceError(null);
+
+    const objData = canvasObjects.find(obj => obj.id === selectedObject);
+
     setCanvasObjects(prev => prev.map(obj =>
       obj.id === selectedObject ? { ...obj, svgExportMode: newMode } : obj
     ));
 
-    // If switching to vector and no trace data exists yet, trigger a trace
-    const objData = canvasObjects.find(obj => obj.id === selectedObject);
-    if (newMode === 'vector' && objData && !objData.svgTracedData) {
-      runTrace(objData.imageDataURL, objData.svgTracePreset || 'detailed');
+    if (newMode === 'vector') {
+      if (objData && !objData.svgTracedData) {
+        runTrace(objData.imageDataURL, objData.svgTracePreset || 'detailed');
+      } else if (objData?.svgTracedData) {
+        swapCanvasImageToVector(objData.svgTracedData, objData);
+      }
+    } else if (newMode === 'bitmap') {
+      if (objData) swapCanvasImageToBitmap(objData);
     }
   };
 
@@ -135,7 +279,6 @@ const PropertiesPanel = () => {
     setCanvasObjects(prev => prev.map(obj =>
       obj.id === selectedObject ? { ...obj, svgTracePreset: presetKey, svgTracedData: null } : obj
     ));
-    // Re-trace with new preset
     const objData = canvasObjects.find(obj => obj.id === selectedObject);
     if (objData?.svgExportMode === 'vector') {
       runTrace(objData.imageDataURL, presetKey);
@@ -148,19 +291,25 @@ const PropertiesPanel = () => {
     setTraceError(null);
     try {
       const svgString = await traceImageToSVG(dataURL, presetKey);
-      // Update the canvas object with the traced SVG data
+
+      const objData = canvasObjects.find(obj => obj.id === selectedObject);
+
       setCanvasObjects(prev => prev.map(obj =>
         obj.id === selectedObject 
           ? { ...obj, svgTracedData: svgString, svgTracePreset: presetKey } 
           : obj
       ));
+
+      if (objData) {
+        await swapCanvasImageToVector(svgString, objData);
+      }
     } catch (err) {
       console.error('SVG tracing failed:', err);
       setTraceError(err.message || 'Tracing failed');
     } finally {
       setIsTracing(false);
     }
-  }, [selectedObject, setCanvasObjects]);
+  }, [selectedObject, setCanvasObjects, canvasObjects, swapCanvasImageToVector]);
 
   const handleRetrace = () => {
     const objData = canvasObjects.find(obj => obj.id === selectedObject);
@@ -168,6 +317,230 @@ const PropertiesPanel = () => {
       runTrace(objData.imageDataURL, objData.svgTracePreset || 'detailed');
     }
   };
+
+  const handleVectorEditSave = useCallback(({ svgTracedData: updatedSVG, vectorPreviewURL }) => {
+    if (!selectedObject) return;
+    setCanvasObjects(prev => prev.map(obj =>
+      obj.id === selectedObject
+        ? { ...obj, svgTracedData: updatedSVG, vectorPreviewURL: vectorPreviewURL || obj.vectorPreviewURL }
+        : obj
+    ));
+    if (vectorPreviewURL && fabricCanvas) {
+      const fo = findFabricObjectById(fabricCanvas, selectedObject);
+      if (fo) {
+        const newImg = new Image();
+        newImg.onload = () => {
+          fo.setElement(newImg);
+          fo.setCoords();
+          fabricCanvas.renderAll();
+        };
+        newImg.src = vectorPreviewURL;
+      }
+    }
+  }, [selectedObject, setCanvasObjects, fabricCanvas]);
+
+  const handleShapeVectorEditSave = useCallback(({ svgTracedData: updatedSVG, vectorPreviewURL }) => {
+    if (!selectedObject || !fabricCanvas) return;
+
+    const objData = canvasObjects.find(obj => obj.id === selectedObject);
+    if (!objData) return;
+
+    const fo = findFabricObjectById(fabricCanvas, selectedObject);
+    if (!fo) return;
+
+    setCanvasObjects(prev => prev.map(obj =>
+      obj.id === selectedObject
+        ? {
+            ...obj,
+            svgTracedData: updatedSVG,
+            hasVectorEdits: true,
+            vectorPreviewURL: vectorPreviewURL || obj.vectorPreviewURL,
+          }
+        : obj
+    ));
+
+    if (vectorPreviewURL) {
+      const left = fo.left;
+      const top = fo.top;
+      const scaleX = fo.scaleX || 1;
+      const scaleY = fo.scaleY || 1;
+      const angle = fo.angle || 0;
+      const opacity = fo.opacity ?? 1;
+
+      fabricCanvas.remove(fo);
+
+      const newImg = new Image();
+      newImg.onload = () => {
+        const fabricImg = new fabric.Image(newImg, {
+          id: selectedObject,
+          left,
+          top,
+          scaleX,
+          scaleY,
+          angle,
+          opacity,
+          originX: 'center',
+          originY: 'center',
+        });
+
+        fabricCanvas.add(fabricImg);
+        fabricCanvas.setActiveObject(fabricImg);
+        fabricCanvas.renderAll();
+      };
+      newImg.src = vectorPreviewURL;
+    }
+  }, [selectedObject, fabricCanvas, canvasObjects, setCanvasObjects]);
+
+  const handleDeformSave = useCallback((newPathString) => {
+    if (!selectedObject || !fabricCanvas) return;
+
+    const objData = canvasObjects.find(obj => obj.id === selectedObject);
+    if (!objData) return;
+
+    const fo = findFabricObjectById(fabricCanvas, selectedObject);
+    if (!fo) return;
+
+    const isFirstDeformation = !objData.convertedToPath;
+
+    const originalPath = isFirstDeformation
+      ? shapeToSVGPath(objData.type, objData)
+      : (objData.originalPath || objData.deformedPath);
+
+    const left = fo.left || 350;
+    const top = fo.top || 250;
+    const scaleX = fo.scaleX || 1;
+    const scaleY = fo.scaleY || 1;
+    const angle = fo.angle || 0;
+    const opacity = fo.opacity ?? 1;
+    const fillColor = fo.fill || objData.fill || '#000000';
+    const strokeVal = fo.stroke || null;
+    const strokeWidthVal = fo.strokeWidth || 0;
+
+    fabricCanvas.remove(fo);
+
+    const newPath = new fabric.Path(newPathString, {
+      id: selectedObject,
+      left,
+      top,
+      scaleX,
+      scaleY,
+      angle,
+      opacity,
+      fill: fillColor,
+      stroke: strokeVal,
+      strokeWidth: strokeWidthVal,
+      originX: 'center',
+      originY: 'center',
+    });
+
+    fabricCanvas.add(newPath);
+    fabricCanvas.setActiveObject(newPath);
+    fabricCanvas.renderAll();
+
+    const pathOffsetX = newPath.pathOffset?.x || 0;
+    const pathOffsetY = newPath.pathOffset?.y || 0;
+    const pathWidth = newPath.width || 100;
+    const pathHeight = newPath.height || 100;
+
+    setCanvasObjects(prev => prev.map(obj =>
+      obj.id === selectedObject
+        ? {
+            ...obj,
+            deformedPath: newPathString,
+            originalPath: originalPath,
+            convertedToPath: true,
+            deformedPathOffsetX: pathOffsetX,
+            deformedPathOffsetY: pathOffsetY,
+            deformedPathWidth: pathWidth,
+            deformedPathHeight: pathHeight,
+          }
+        : obj
+    ));
+
+    const props = extractPropertiesFromFabricObject(newPath);
+    const baseProperties = {
+      x: props?.x ?? left,
+      y: props?.y ?? top,
+      scaleX: props?.scaleX ?? scaleX,
+      scaleY: props?.scaleY ?? scaleY,
+      rotation: props?.rotation ?? angle,
+      opacity: props?.opacity ?? opacity,
+      zIndex: props?.zIndex ?? 0,
+      fill: fillColor,
+    };
+
+    setKeyframes(prev => {
+      const updated = { ...prev };
+      let kfs = [...(updated[selectedObject] || [])];
+
+      if (isFirstDeformation) {
+        const idx0 = kfs.findIndex(kf => Math.abs(kf.time) < 0.05);
+        if (idx0 >= 0) {
+          kfs[idx0] = {
+            ...kfs[idx0],
+            properties: {
+              ...kfs[idx0].properties,
+              deformedPath: originalPath,
+            },
+          };
+        } else {
+          kfs.push({
+            time: 0,
+            properties: { ...baseProperties, deformedPath: originalPath },
+            easing: 'linear',
+          });
+        }
+
+        const targetTime = Math.max(currentTime, 0.1);
+        const idxCurr = kfs.findIndex(
+          kf => Math.abs(kf.time - targetTime) < 0.05
+        );
+        if (idxCurr >= 0) {
+          kfs[idxCurr] = {
+            ...kfs[idxCurr],
+            properties: {
+              ...kfs[idxCurr].properties,
+              deformedPath: newPathString,
+            },
+          };
+        } else {
+          kfs.push({
+            time: targetTime,
+            properties: { ...baseProperties, deformedPath: newPathString },
+            easing: 'linear',
+          });
+        }
+
+      } else {
+        const idxCurr = kfs.findIndex(
+          kf => Math.abs(kf.time - currentTime) < 0.05
+        );
+        if (idxCurr >= 0) {
+          kfs[idxCurr] = {
+            ...kfs[idxCurr],
+            properties: {
+              ...kfs[idxCurr].properties,
+              deformedPath: newPathString,
+            },
+          };
+        } else {
+          kfs.push({
+            time: currentTime,
+            properties: { ...baseProperties, deformedPath: newPathString },
+            easing: 'linear',
+          });
+        }
+      }
+
+      kfs.sort((a, b) => a.time - b.time);
+      updated[selectedObject] = kfs;
+      return updated;
+    });
+
+  }, [
+    selectedObject, fabricCanvas, canvasObjects,
+    setCanvasObjects, setKeyframes, currentTime,
+  ]);
 
   // ==================== COMPUTED VALUES ====================
 
@@ -192,12 +565,15 @@ const PropertiesPanel = () => {
   const isImage = objectData?.type === 'image';
   const pathFills = objectData?.fills || [];
 
-  // Image SVG conversion state
   const svgExportMode = objectData?.svgExportMode || 'bitmap';
   const svgTracePreset = objectData?.svgTracePreset || 'detailed';
   const svgTracedData = objectData?.svgTracedData || null;
 
+  const currentOutlineWidth = isSolidShape ? getCurrentOutlineWidth() : 0;
+  const currentOutlineColor = isSolidShape ? getCurrentOutlineColor() : '#000000';
+
   return (
+    <>
     <Drawer variant="permanent" anchor="right"
       sx={{ width: drawerWidth, flexShrink: 0,
         '& .MuiDrawer-paper': { width: drawerWidth, boxSizing: 'border-box', position: 'relative', height: '100%' } }}>
@@ -308,6 +684,126 @@ const PropertiesPanel = () => {
                   </>
                 )}
 
+                {isSolidShape && (
+                  <>
+                    <Divider />
+                    <Box>
+                      <Typography variant="body2" gutterBottom fontWeight={600}>✏️ Outline</Typography>
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0, mb: 1.5,
+                        border: '1px solid', borderColor: 'divider', borderRadius: 1, overflow: 'hidden' }}>
+                        {OUTLINE_WIDTH_OPTIONS.map((opt, idx) => {
+                          const isSelected = currentOutlineWidth === opt.value;
+                          return (
+                            <ButtonBase
+                              key={opt.value}
+                              onClick={() => handleOutlineWidthChange(opt.value)}
+                              sx={{
+                                display: 'flex', alignItems: 'center', gap: 1.5,
+                                px: 1.5, py: 1,
+                                bgcolor: isSelected ? 'primary.main' : 'background.paper',
+                                borderBottom: idx < OUTLINE_WIDTH_OPTIONS.length - 1 ? '1px solid' : 'none',
+                                borderColor: 'divider',
+                                transition: 'background-color 0.15s',
+                                '&:hover': { bgcolor: isSelected ? 'primary.main' : 'action.hover' },
+                              }}
+                            >
+                              <Typography variant="caption" sx={{
+                                minWidth: 32, fontWeight: 600, fontSize: '0.75rem',
+                                color: isSelected ? 'primary.contrastText' : 'text.primary',
+                              }}>
+                                {opt.label}
+                              </Typography>
+                              {opt.value > 0 ? (
+                                <Box sx={{
+                                  flex: 1,
+                                  height: Math.max(opt.height, 1),
+                                  bgcolor: isSelected ? 'primary.contrastText' : currentOutlineColor,
+                                  borderRadius: opt.height >= 5 ? '1px' : 0,
+                                }} />
+                              ) : (
+                                <Typography variant="caption" sx={{
+                                  flex: 1, textAlign: 'center', fontStyle: 'italic',
+                                  color: isSelected ? 'primary.contrastText' : 'text.disabled',
+                                  fontSize: '0.7rem',
+                                }}>
+                                  No outline
+                                </Typography>
+                              )}
+                            </ButtonBase>
+                          );
+                        })}
+                      </Box>
+                      {currentOutlineWidth > 0 && (
+                        <Box>
+                          <Typography variant="body2" gutterBottom sx={{ fontSize: '0.8rem' }}>Outline Color</Typography>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <TextField type="color" value={currentOutlineColor} onChange={handleOutlineColorChange}
+                              size="small" sx={{ width: 60, '& input': { cursor: 'pointer', p: 0.5, height: 36 } }} />
+                            <Typography variant="caption" color="text.secondary">{currentOutlineColor}</Typography>
+                          </Box>
+                        </Box>
+                      )}
+                    </Box>
+                  </>
+                )}
+
+                {isSolidShape && objectData?.type !== 'text' && (
+                  <>
+                    <Divider />
+                    <Box>
+                      <Typography variant="body2" gutterBottom fontWeight={600}>🔍 Vector Detail Editor</Typography>
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1, lineHeight: 1.4 }}>
+                        Open a zoomed view to draw or place shapes on top of this shape.
+                      </Typography>
+                      <Button variant="outlined" size="small" fullWidth startIcon={<ZoomInIcon />}
+                        onClick={() => {
+                          if (!objectData.svgTracedData) {
+                            const shapeSVG = generateShapeSVG(objectData);
+                            setCanvasObjects(prev => prev.map(obj =>
+                              obj.id === selectedObject ? { ...obj, svgTracedData: shapeSVG } : obj
+                            ));
+                          }
+                          setVectorEditOpen(true);
+                        }}
+                        color="secondary" sx={{ textTransform: 'none' }}>
+                        Edit Vector Details (Zoom)
+                      </Button>
+                      {objectData?.hasVectorEdits && (
+                        <Paper variant="outlined" sx={{ p: 1, mt: 1, bgcolor: 'success.light' }}>
+                          <Typography variant="caption" color="success.contrastText" sx={{ fontSize: '0.65rem', lineHeight: 1.4 }}>
+                            ✅ Vector edits applied
+                          </Typography>
+                        </Paper>
+                      )}
+                    </Box>
+                  </>
+                )}
+
+                {isSolidShape && objectData?.type !== 'text' && (
+                  <>
+                    <Divider />
+                    <Box>
+                      <Typography variant="body2" gutterBottom fontWeight={600}>🔀 Shape Deformation</Typography>
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1, lineHeight: 1.4 }}>
+                        {objectData?.deformedPath
+                          ? `Move the scrubber to a new time, then deform again. (Currently at ${currentTime.toFixed(1)}s)`
+                          : 'Move the scrubber to the time you want the morph to end, then click Deform.'}
+                      </Typography>
+                      <Button variant="outlined" size="small" fullWidth color="secondary" startIcon={<DeformIcon />}
+                        onClick={() => setDeformModalOpen(true)} sx={{ textTransform: 'none' }}>
+                        {objectData?.deformedPath ? 'Edit Deformed Path' : 'Deform Shape'}
+                      </Button>
+                      {objectData?.convertedToPath && (
+                        <Paper variant="outlined" sx={{ p: 1, mt: 1, bgcolor: 'secondary.light' }}>
+                          <Typography variant="caption" color="secondary.contrastText" sx={{ fontSize: '0.65rem', lineHeight: 1.4 }}>
+                            ✅ Morph keyframes auto-created — press Play to see the shape morph
+                          </Typography>
+                        </Paper>
+                      )}
+                    </Box>
+                  </>
+                )}
+
                 {isPath && (
                   <>
                     <Divider />
@@ -335,146 +831,94 @@ const PropertiesPanel = () => {
                     {pathFills.length === 0 && (
                       <Paper variant="outlined" sx={{ p: 1.5, bgcolor: 'info.light' }}>
                         <Typography variant="caption" color="info.contrastText">
-                          💡 To fill an enclosed area (like a head), use the <strong>🪣 Paint Bucket</strong> tool in the toolbar
+                          💡 To fill an enclosed area, use the <strong>🪣 Paint Bucket</strong> tool
                         </Typography>
                       </Paper>
                     )}
                   </>
                 )}
 
-                {/* ==================== IMAGE SVG CONVERSION ==================== */}
                 {isImage && (
                   <>
                     <Divider />
                     <Box>
                       <Typography variant="body2" gutterBottom fontWeight={600}>📐 Export Image Format</Typography>
 
-                      <ToggleButtonGroup
-                        value={svgExportMode}
-                        exclusive
-                        onChange={handleExportModeChange}
-                        size="small"
-                        fullWidth
-                        sx={{ mb: 1.5 }}
-                      >
-                        <ToggleButton value="bitmap" sx={{ textTransform: 'none', fontSize: '0.75rem' }}>
-                          🖼️ Bitmap
-                        </ToggleButton>
-                        <ToggleButton value="vector" sx={{ textTransform: 'none', fontSize: '0.75rem' }}>
-                          📐 Vector (SVG)
-                        </ToggleButton>
+                      <ToggleButtonGroup value={svgExportMode} exclusive onChange={handleExportModeChange}
+                        size="small" fullWidth sx={{ mb: 1.5 }}>
+                        <ToggleButton value="bitmap" sx={{ textTransform: 'none', fontSize: '0.75rem' }}>🖼️ Bitmap</ToggleButton>
+                        <ToggleButton value="vector" sx={{ textTransform: 'none', fontSize: '0.75rem' }}>📐 Vector (SVG)</ToggleButton>
                       </ToggleButtonGroup>
 
                       {svgExportMode === 'bitmap' && (
                         <Paper variant="outlined" sx={{ p: 1.5, bgcolor: 'grey.50' }}>
                           <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.5 }}>
-                            Exports the original image as a base64 <code>&lt;img&gt;</code> tag. 
-                            Pixel-perfect but raster — will pixelate if scaled up.
+                            Exports the original image as a base64 <code>&lt;img&gt;</code> tag.
                           </Typography>
                         </Paper>
                       )}
 
                       {svgExportMode === 'vector' && (
                         <Box>
-                          {/* Preset selector */}
                           <FormControl fullWidth size="small" sx={{ mb: 1.5 }}>
                             <InputLabel>Trace Style</InputLabel>
-                            <Select
-                              value={svgTracePreset}
-                              label="Trace Style"
-                              onChange={handlePresetChange}
-                              disabled={isTracing}
-                            >
+                            <Select value={svgTracePreset} label="Trace Style" onChange={handlePresetChange} disabled={isTracing}>
                               {TRACE_PRESETS.map(preset => (
                                 <MenuItem key={preset.key} value={preset.key}>
                                   <Box>
                                     <Typography variant="body2">{preset.label}</Typography>
-                                    <Typography variant="caption" color="text.secondary">
-                                      {preset.description}
-                                    </Typography>
+                                    <Typography variant="caption" color="text.secondary">{preset.description}</Typography>
                                   </Box>
                                 </MenuItem>
                               ))}
                             </Select>
                           </FormControl>
 
-                          {/* Trace / Retrace button */}
-                          <Button
-                            variant="outlined"
-                            size="small"
-                            fullWidth
-                            onClick={handleRetrace}
-                            disabled={isTracing}
-                            startIcon={isTracing ? <CircularProgress size={16} /> : null}
-                            sx={{ mb: 1.5 }}
-                          >
+                          <Button variant="outlined" size="small" fullWidth onClick={handleRetrace}
+                            disabled={isTracing} startIcon={isTracing ? <CircularProgress size={16} /> : null} sx={{ mb: 1.5 }}>
                             {isTracing ? 'Tracing...' : svgTracedData ? 'Re-trace' : 'Trace to SVG'}
                           </Button>
 
                           {traceError && (
                             <Paper variant="outlined" sx={{ p: 1, mb: 1.5, bgcolor: 'error.light' }}>
-                              <Typography variant="caption" color="error.contrastText">
-                                ⚠️ {traceError}
-                              </Typography>
+                              <Typography variant="caption" color="error.contrastText">⚠️ {traceError}</Typography>
                             </Paper>
                           )}
 
-                          {/* Side-by-side comparison */}
+                          {svgTracedData && !isTracing && (
+                            <Button variant="outlined" size="small" fullWidth startIcon={<ZoomInIcon />}
+                              onClick={() => setVectorEditOpen(true)} color="secondary" sx={{ mb: 1.5, textTransform: 'none' }}>
+                              Edit Vector Details (Zoom)
+                            </Button>
+                          )}
+
                           {svgTracedData && !isTracing && (
                             <Paper variant="outlined" sx={{ p: 1.5, bgcolor: '#fafafa' }}>
                               <Typography variant="caption" fontWeight={700} color="text.secondary" sx={{ display: 'block', mb: 1, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                                 Comparison Preview
                               </Typography>
                               <Box sx={{ display: 'flex', gap: 1 }}>
-                                {/* Original bitmap */}
                                 <Box sx={{ flex: 1, textAlign: 'center' }}>
-                                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5, fontSize: '0.65rem' }}>
-                                    Bitmap (Original)
-                                  </Typography>
-                                  <Box sx={{ 
-                                    width: '100%', aspectRatio: `${objectData.imageWidth || 1}/${objectData.imageHeight || 1}`,
-                                    border: '1px solid', borderColor: 'divider', borderRadius: 0.5, overflow: 'hidden',
-                                    bgcolor: '#fff',
-                                  }}>
-                                    <img 
-                                      src={objectData.imageDataURL} 
-                                      alt="Original"
-                                      style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} 
-                                    />
+                                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5, fontSize: '0.65rem' }}>Bitmap</Typography>
+                                  <Box sx={{ width: '100%', aspectRatio: `${objectData.imageWidth || 1}/${objectData.imageHeight || 1}`,
+                                    border: '1px solid', borderColor: 'divider', borderRadius: 0.5, overflow: 'hidden', bgcolor: '#fff' }}>
+                                    <img src={objectData.imageDataURL} alt="Original" style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} />
                                   </Box>
                                 </Box>
-                                {/* Traced SVG */}
                                 <Box sx={{ flex: 1, textAlign: 'center' }}>
-                                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5, fontSize: '0.65rem' }}>
-                                    Vector (SVG Traced)
-                                  </Typography>
-                                  <Box sx={{ 
-                                    width: '100%', aspectRatio: `${objectData.imageWidth || 1}/${objectData.imageHeight || 1}`,
-                                    border: '1px solid', borderColor: 'divider', borderRadius: 0.5, overflow: 'hidden',
-                                    bgcolor: '#fff',
-                                    '& svg': { width: '100%', height: '100%', display: 'block' },
-                                  }}
-                                    dangerouslySetInnerHTML={{ __html: createSizedSVG(svgTracedData, objectData.imageWidth || 100, objectData.imageHeight || 100) }}
-                                  />
+                                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5, fontSize: '0.65rem' }}>Vector</Typography>
+                                  <Box sx={{ width: '100%', aspectRatio: `${objectData.imageWidth || 1}/${objectData.imageHeight || 1}`,
+                                    border: '1px solid', borderColor: 'divider', borderRadius: 0.5, overflow: 'hidden', bgcolor: '#fff',
+                                    '& svg': { width: '100%', height: '100%', display: 'block' } }}
+                                    dangerouslySetInnerHTML={{ __html: createSizedSVG(svgTracedData, objectData.imageWidth || 100, objectData.imageHeight || 100) }} />
                                 </Box>
                               </Box>
-                              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1, lineHeight: 1.4 }}>
-                                The vector version uses SVG <code>&lt;path&gt;</code> elements — 
-                                no pixels, no base64. It stays sharp at any zoom level.
-                              </Typography>
                             </Paper>
                           )}
 
                           <Paper variant="outlined" sx={{ p: 1.5, mt: 1.5, bgcolor: 'info.light' }}>
                             <Typography variant="caption" color="info.contrastText" sx={{ lineHeight: 1.5 }}>
-                              💡 <strong>How it works:</strong> The bitmap is traced into 
-                              mathematical vector paths using color quantization and contour detection.
-                              The exported code uses <code>&lt;svg&gt;&lt;path&gt;</code> elements 
-                              instead of <code>&lt;img src="base64..."&gt;</code>.
-                              <br /><br />
-                              <strong>Evidence:</strong> Inspect the exported HTML source to see 
-                              actual <code>&lt;path d="M..."&gt;</code> data — not embedded bitmaps.
-                              Zoom into the exported page to see smooth vector edges.
+                              💡 The bitmap is traced into vector paths. The exported code uses <code>&lt;svg&gt;&lt;path&gt;</code> instead of base64.
                             </Typography>
                           </Paper>
                         </Box>
@@ -490,7 +934,7 @@ const PropertiesPanel = () => {
                 <Typography variant="body2" sx={{ lineHeight: 1.6 }}>
                   💡 <strong>Tip:</strong> {hasCustomAnchor 
                     ? 'X/Y show the pivot point position. The object rotates around this point.' 
-                    : 'X/Y show the center position. Drag objects or type values, then click "Add Keyframe" to record.'}
+                    : 'X/Y show the center position. Double-click text objects to edit them.'}
                   {hasCustomAnchor && (<><br /><br />🎯 Pivot at ({(anchorX*100).toFixed(0)}%, {(anchorY*100).toFixed(0)}%).</>)}
                 </Typography>
               </Paper>
@@ -498,17 +942,112 @@ const PropertiesPanel = () => {
           </>
         ) : (
           <Box>
+            {/* ==================== CANVAS BACKGROUND ==================== */}
             <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
               <Typography variant="body2" fontWeight={600} gutterBottom>🖼️ Canvas Background</Typography>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <TextField type="color" value={canvasBgColor} onChange={(e) => setCanvasBgColor(e.target.value)}
-                  size="small" sx={{ width: 60, '& input': { cursor: 'pointer', p: 0.5, height: 36 } }} />
-                <Typography variant="caption" color="text.secondary">{canvasBgColor}</Typography>
+              
+              {/* Background Color */}
+              <Box sx={{ mb: 2 }}>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>Color</Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <TextField type="color" value={canvasBgColor} onChange={(e) => setCanvasBgColor(e.target.value)}
+                    size="small" sx={{ width: 60, '& input': { cursor: 'pointer', p: 0.5, height: 36 } }} />
+                  <Typography variant="caption" color="text.secondary">{canvasBgColor}</Typography>
+                </Box>
               </Box>
-              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-                Changes apply to editor, preview, and exported code
-              </Typography>
+
+              <Divider sx={{ my: 1.5 }} />
+
+              {/* Background Image */}
+              <Box>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>Background Image</Typography>
+                
+                {canvasBgImage ? (
+                  <Box>
+                    {/* Preview */}
+                    <Box sx={{
+                      width: '100%',
+                      height: 120,
+                      borderRadius: 1,
+                      overflow: 'hidden',
+                      border: '1px solid',
+                      borderColor: 'divider',
+                      mb: 1.5,
+                      position: 'relative',
+                    }}>
+                      <img
+                        src={canvasBgImage.dataURL}
+                        alt="Background"
+                        style={{
+                          width: '100%',
+                          height: '100%',
+                          objectFit: 'cover',
+                          display: 'block',
+                        }}
+                      />
+                      <Box sx={{
+                        position: 'absolute',
+                        bottom: 4,
+                        left: 4,
+                        bgcolor: 'rgba(0,0,0,0.6)',
+                        color: 'white',
+                        px: 0.75,
+                        py: 0.25,
+                        borderRadius: 0.5,
+                        fontSize: '0.6rem',
+                      }}>
+                        {canvasBgImage.width}×{canvasBgImage.height}
+                      </Box>
+                    </Box>
+
+                    <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'block', mb: 1 }}>
+                      {canvasBgImage.fileName}
+                    </Typography>
+
+                    <Box sx={{ display: 'flex', gap: 1 }}>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        startIcon={<WallpaperIcon />}
+                        onClick={() => bgImageInputRef.current?.click()}
+                        sx={{ flex: 1, textTransform: 'none', fontSize: '0.75rem' }}
+                      >
+                        Replace
+                      </Button>
+                      <Tooltip title="Remove background image">
+                        <IconButton size="small" color="error" onClick={handleRemoveBgImage} sx={{ border: '1px solid', borderColor: 'error.light' }}>
+                          <DeleteIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    </Box>
+                  </Box>
+                ) : (
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    fullWidth
+                    startIcon={<UploadImageIcon />}
+                    onClick={() => bgImageInputRef.current?.click()}
+                    sx={{ textTransform: 'none', py: 1.5, borderStyle: 'dashed' }}
+                  >
+                    Upload Background Image
+                  </Button>
+                )}
+
+                <input
+                  ref={bgImageInputRef}
+                  type="file"
+                  accept="image/*"
+                  style={{ display: 'none' }}
+                  onChange={handleBgImageUpload}
+                />
+
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1, lineHeight: 1.4 }}>
+                  Image will be scaled to fill the canvas. Applies to editor, preview, and exported code.
+                </Typography>
+              </Box>
             </Paper>
+
             <Paper variant="outlined" sx={{ p: 3, textAlign: 'center', bgcolor: 'grey.50' }}>
               <Typography variant="body2" color="text.secondary">
                 Select an object on the stage to view and edit its properties
@@ -518,6 +1057,20 @@ const PropertiesPanel = () => {
         )}
       </Box>
     </Drawer>
+      {isImage && svgTracedData && (
+        <VectorEditModal open={vectorEditOpen} onClose={() => setVectorEditOpen(false)}
+          objectData={objectData} onSave={handleVectorEditSave} />
+      )}
+      {isSolidShape && objectData?.type !== 'text' && objectData?.svgTracedData && (
+        <VectorEditModal open={vectorEditOpen} onClose={() => setVectorEditOpen(false)}
+          objectData={objectData} onSave={handleShapeVectorEditSave} />
+      )}
+      {isSolidShape && objectData?.type !== 'text' && (
+        <PathDeformModal open={deformModalOpen} onClose={() => setDeformModalOpen(false)}
+          pathString={objectData?.deformedPath || shapeToSVGPath(objectData?.type, objectData)}
+          fillColor={objectData?.fill || '#000000'} onSave={handleDeformSave} />
+      )}
+    </>
   );
 };
 

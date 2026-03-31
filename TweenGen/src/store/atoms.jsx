@@ -163,6 +163,13 @@ export const canvasBgColorState = atom({
   default: '#f0f0f0',
 });
 
+// Canvas background image (data URL or null)
+export const canvasBgImageState = atom({
+  key: 'canvasBgImageState',
+  default: null,
+  // Shape: { dataURL: string, width: number, height: number, fileName: string } | null
+});
+
 // Paint bucket tool active
 export const fillToolActiveState = atom({
   key: 'fillToolActiveState',

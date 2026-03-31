@@ -9,6 +9,8 @@ import {
   MusicNote as MusicIcon,
   GraphicEq as WaveformIcon,
   ContentCut as TrimIcon,
+  SyncAlt as SyncIcon,
+  AudioFile as FullAudioIcon,
 } from '@mui/icons-material';
 import { useAudioFile, useAudioWaveform, useAudioVolume, useAudioMuted, useAudioRegion } from '../../store/audioHooks';
 import { useCurrentTime, useDuration, useIsPlaying } from '../../store/hooks';
@@ -30,6 +32,13 @@ const BG_COLOR = 'rgba(241, 245, 249, 1)';
 const CENTER_LINE = 'rgba(148, 163, 184, 0.3)';
 const HANDLE_COLOR = 'rgba(59, 130, 246, 0.95)';
 const HANDLE_HOVER = 'rgba(37, 99, 235, 1)';
+// Sync view colors
+const SYNC_PLAYED_TOP = 'rgba(16, 185, 129, 0.9)';
+const SYNC_PLAYED_BOTTOM = 'rgba(59, 130, 246, 0.9)';
+const SYNC_UNPLAYED_TOP = 'rgba(16, 185, 129, 0.35)';
+const SYNC_UNPLAYED_BOTTOM = 'rgba(59, 130, 246, 0.35)';
+const SYNC_BG = 'rgba(236, 253, 245, 1)';
+const BEAT_LINE_COLOR = 'rgba(16, 185, 129, 0.12)';
 
 const formatTime = (seconds) => {
   if (seconds == null || isNaN(seconds)) return '0:00';
@@ -53,6 +62,10 @@ const AudioTrack = () => {
   const [duration] = useDuration();
   const [isPlaying] = useIsPlaying();
 
+  // View mode: 'sync' shows trimmed region stretched to timeline width
+  //            'full' shows entire audio with trim handles
+  const [viewMode, setViewMode] = useState('sync');
+
   if (!audioFile) return null;
 
   const audioDuration = audioFile.duration || 0;
@@ -68,7 +81,6 @@ const AudioTrack = () => {
   };
 
   const handleFitToDuration = () => {
-    // Set region end = start + animation duration (clamped to audio length)
     const start = effectiveRegion.start;
     const end = Math.min(start + duration, audioDuration);
     setRegion({ start, end });
@@ -82,21 +94,24 @@ const AudioTrack = () => {
     ? audioFile.fileName.slice(0, 15) + '...'
     : audioFile.fileName || 'Audio';
 
+  const isSyncView = viewMode === 'sync';
+
   return (
     <Paper
       variant="outlined"
       sx={{
         display: 'flex', flexDirection: 'column',
-        borderColor: 'primary.light', borderWidth: 2,
-        bgcolor: 'rgba(59, 130, 246, 0.03)',
+        borderColor: isSyncView ? 'success.light' : 'primary.light', borderWidth: 2,
+        bgcolor: isSyncView ? 'rgba(16, 185, 129, 0.03)' : 'rgba(59, 130, 246, 0.03)',
         borderRadius: 1, overflow: 'hidden', mt: 1,
+        transition: 'border-color 0.2s, background-color 0.2s',
       }}
     >
       {/* Top bar: controls */}
       <Box sx={{ display: 'flex', alignItems: 'center', p: 1, gap: 1, borderBottom: '1px solid', borderColor: 'divider' }}>
-        <MusicIcon sx={{ fontSize: 16, color: 'primary.main' }} />
+        <MusicIcon sx={{ fontSize: 16, color: isSyncView ? 'success.main' : 'primary.main' }} />
         <Tooltip title={audioFile.fileName || 'Audio'} placement="top">
-          <Typography variant="caption" fontWeight={700} color="primary.dark" noWrap sx={{ minWidth: 60 }}>
+          <Typography variant="caption" fontWeight={700} color={isSyncView ? 'success.dark' : 'primary.dark'} noWrap sx={{ minWidth: 60 }}>
             {displayName}
           </Typography>
         </Tooltip>
@@ -108,18 +123,29 @@ const AudioTrack = () => {
         <Box sx={{ mx: 0.5, height: 16, borderLeft: '1px solid', borderColor: 'divider' }} />
 
         {/* Region info */}
-        <TrimIcon sx={{ fontSize: 14, color: 'primary.main', opacity: 0.6 }} />
-        <Typography variant="caption" sx={{ fontSize: '0.65rem', color: 'primary.dark', fontFamily: 'monospace' }}>
+        <TrimIcon sx={{ fontSize: 14, color: isSyncView ? 'success.main' : 'primary.main', opacity: 0.6 }} />
+        <Typography variant="caption" sx={{ fontSize: '0.65rem', color: isSyncView ? 'success.dark' : 'primary.dark', fontFamily: 'monospace' }}>
           {formatTime(effectiveRegion.start)} — {formatTime(effectiveRegion.end)}
           <span style={{ opacity: 0.5, marginLeft: 4 }}>({formatTime(regionDuration)})</span>
         </Typography>
 
         <Box sx={{ flex: 1 }} />
 
+        {/* View mode toggle */}
+        <Tooltip title={isSyncView ? 'Switch to Full Audio view for trimming' : 'Switch to Timeline Sync view'} placement="top">
+          <Button size="small" variant={isSyncView ? 'contained' : 'outlined'}
+            onClick={() => setViewMode(isSyncView ? 'full' : 'sync')}
+            color={isSyncView ? 'success' : 'primary'}
+            startIcon={isSyncView ? <SyncIcon sx={{ fontSize: 14 }} /> : <FullAudioIcon sx={{ fontSize: 14 }} />}
+            sx={{ fontSize: '0.6rem', py: 0, px: 0.75, minWidth: 'auto', textTransform: 'none' }}>
+            {isSyncView ? 'Synced' : 'Full Audio'}
+          </Button>
+        </Tooltip>
+
         {/* Volume */}
         <Tooltip title={muted ? 'Unmute' : 'Mute'} placement="top">
           <IconButton size="small" onClick={() => setMuted(p => !p)} sx={{ p: 0.3 }}>
-            {muted ? <MuteIcon sx={{ fontSize: 16, color: 'text.secondary' }} /> : <VolumeIcon sx={{ fontSize: 16, color: 'primary.main' }} />}
+            {muted ? <MuteIcon sx={{ fontSize: 16, color: 'text.secondary' }} /> : <VolumeIcon sx={{ fontSize: 16, color: isSyncView ? 'success.main' : 'primary.main' }} />}
           </IconButton>
         </Tooltip>
         <Slider
@@ -129,21 +155,25 @@ const AudioTrack = () => {
           sx={{ width: 60, mx: 0.5, '& .MuiSlider-thumb': { width: 10, height: 10 } }}
         />
 
-        {/* Fit / Reset / Remove */}
-        <Tooltip title="Set audio region to match animation duration" placement="top">
-          <Button size="small" variant="outlined" onClick={handleFitToDuration}
-            sx={{ fontSize: '0.6rem', py: 0, px: 0.75, minWidth: 'auto', textTransform: 'none' }}>
-            Fit to {duration.toFixed(1)}s
-          </Button>
-        </Tooltip>
+        {/* Only show trim controls in full view */}
+        {!isSyncView && (
+          <>
+            <Tooltip title="Set audio region to match animation duration" placement="top">
+              <Button size="small" variant="outlined" onClick={handleFitToDuration}
+                sx={{ fontSize: '0.6rem', py: 0, px: 0.75, minWidth: 'auto', textTransform: 'none' }}>
+                Fit to {duration.toFixed(1)}s
+              </Button>
+            </Tooltip>
 
-        {region && (
-          <Tooltip title="Reset to full audio" placement="top">
-            <Button size="small" onClick={handleResetRegion}
-              sx={{ fontSize: '0.6rem', py: 0, px: 0.75, minWidth: 'auto', textTransform: 'none' }}>
-              Reset
-            </Button>
-          </Tooltip>
+            {region && (
+              <Tooltip title="Reset to full audio" placement="top">
+                <Button size="small" onClick={handleResetRegion}
+                  sx={{ fontSize: '0.6rem', py: 0, px: 0.75, minWidth: 'auto', textTransform: 'none' }}>
+                  Reset
+                </Button>
+              </Tooltip>
+            )}
+          </>
         )}
 
         <Tooltip title="Remove audio" placement="top">
@@ -153,44 +183,40 @@ const AudioTrack = () => {
         </Tooltip>
       </Box>
 
-      {/* Waveform with trim handles */}
+      {/* Waveform */}
       <Box sx={{ position: 'relative', height: 70 }}>
-        <WaveformCanvas
-          peaks={waveform}
-          currentTime={currentTime}
-          duration={duration}
-          audioDuration={audioDuration}
-          region={effectiveRegion}
-          onRegionChange={setRegion}
-          isPlaying={isPlaying}
-        />
+        {isSyncView ? (
+          <SyncWaveformCanvas
+            peaks={waveform}
+            currentTime={currentTime}
+            duration={duration}
+            audioDuration={audioDuration}
+            region={effectiveRegion}
+          />
+        ) : (
+          <FullWaveformCanvas
+            peaks={waveform}
+            currentTime={currentTime}
+            duration={duration}
+            audioDuration={audioDuration}
+            region={effectiveRegion}
+            onRegionChange={setRegion}
+            isPlaying={isPlaying}
+          />
+        )}
       </Box>
     </Paper>
   );
 };
 
 // ===================================================================
-// Waveform Canvas with Trim Handles
+// SYNC VIEW — Trimmed region fills the full timeline width
 // ===================================================================
 
-const WaveformCanvas = ({ peaks, currentTime, duration, audioDuration, region, onRegionChange, isPlaying }) => {
+const SyncWaveformCanvas = ({ peaks, currentTime, duration, audioDuration, region }) => {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
-  const [dragging, setDragging] = useState(null); // 'start' | 'end' | 'body' | null
-  const [hovered, setHovered] = useState(null); // 'start' | 'end' | null
-  const dragStartRef = useRef(null);
 
-  const timeToX = useCallback((time, width) => {
-    if (audioDuration <= 0) return 0;
-    return (time / audioDuration) * width;
-  }, [audioDuration]);
-
-  const xToTime = useCallback((x, width) => {
-    if (width <= 0) return 0;
-    return Math.max(0, Math.min(audioDuration, (x / width) * audioDuration));
-  }, [audioDuration]);
-
-  // ===== DRAWING =====
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
     const container = containerRef.current;
@@ -210,7 +236,7 @@ const WaveformCanvas = ({ peaks, currentTime, duration, audioDuration, region, o
     ctx.clearRect(0, 0, width, height);
 
     // Background
-    ctx.fillStyle = BG_COLOR;
+    ctx.fillStyle = SYNC_BG;
     ctx.fillRect(0, 0, width, height);
 
     const centerY = height / 2;
@@ -223,18 +249,175 @@ const WaveformCanvas = ({ peaks, currentTime, duration, audioDuration, region, o
     ctx.lineTo(width, centerY);
     ctx.stroke();
 
-    // Region bounds in pixels
+    // Extract only the peaks within the trim region
+    const regionStart = region.start;
+    const regionEnd = region.end;
+    const startIdx = Math.floor((regionStart / audioDuration) * peaks.length);
+    const endIdx = Math.ceil((regionEnd / audioDuration) * peaks.length);
+    const trimmedPeaks = peaks.slice(Math.max(0, startIdx), Math.min(peaks.length, endIdx));
+
+    if (trimmedPeaks.length === 0) return;
+
+    // Playhead position: directly maps animation time to canvas width
+    const playheadX = duration > 0 ? (currentTime / duration) * width : 0;
+
+    // Draw subtle time markers every second
+    ctx.strokeStyle = BEAT_LINE_COLOR;
+    ctx.lineWidth = 1;
+    for (let t = 1; t < duration; t++) {
+      const x = (t / duration) * width;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, height);
+      ctx.stroke();
+    }
+
+    // Draw waveform bars — trimmed peaks stretched across full width
+    const barWidth = width / trimmedPeaks.length;
+    for (let i = 0; i < trimmedPeaks.length; i++) {
+      const peak = trimmedPeaks[i] || 0;
+      const barHeight = Math.max(2, peak * (height * 0.75));
+      const x = i * barWidth;
+      const halfBar = barHeight / 2;
+
+      const isPlayed = x <= playheadX;
+
+      const grad = ctx.createLinearGradient(x, centerY - halfBar, x, centerY + halfBar);
+      if (isPlayed) {
+        grad.addColorStop(0, SYNC_PLAYED_TOP);
+        grad.addColorStop(1, SYNC_PLAYED_BOTTOM);
+      } else {
+        grad.addColorStop(0, SYNC_UNPLAYED_TOP);
+        grad.addColorStop(1, SYNC_UNPLAYED_BOTTOM);
+      }
+
+      ctx.fillStyle = grad;
+      const bw = Math.max(1, barWidth - (barWidth > 3 ? 1 : 0));
+      ctx.fillRect(x, centerY - halfBar, bw, barHeight);
+    }
+
+    // Playhead
+    ctx.strokeStyle = PLAYHEAD_COLOR;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(playheadX, 0);
+    ctx.lineTo(playheadX, height);
+    ctx.stroke();
+
+    ctx.fillStyle = PLAYHEAD_COLOR;
+    ctx.beginPath();
+    ctx.arc(playheadX, 4, 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Time labels — animation time
+    ctx.fillStyle = 'rgba(16, 185, 129, 0.8)';
+    ctx.font = '9px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText('0:00', 4, height - 4);
+    ctx.textAlign = 'right';
+    ctx.fillText(formatTime(duration), width - 4, height - 4);
+
+    // Current time label at playhead
+    if (playheadX > 40 && playheadX < width - 40) {
+      ctx.fillStyle = PLAYHEAD_COLOR;
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 9px monospace';
+      ctx.fillText(formatTime(currentTime), playheadX, height - 4);
+    }
+
+  }, [peaks, currentTime, duration, audioDuration, region]);
+
+  useEffect(() => { draw(); }, [draw]);
+
+  useEffect(() => {
+    const observer = new ResizeObserver(() => draw());
+    if (containerRef.current) observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, [draw]);
+
+  return (
+    <Box
+      ref={containerRef}
+      sx={{
+        position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
+        cursor: 'default', userSelect: 'none',
+      }}
+    >
+      <canvas
+        ref={canvasRef}
+        style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', display: 'block', pointerEvents: 'none' }}
+      />
+      {/* Label */}
+      <Box sx={{ position: 'absolute', top: 2, left: 6, display: 'flex', alignItems: 'center', gap: 0.5, pointerEvents: 'none' }}>
+        <SyncIcon sx={{ fontSize: 10, color: 'success.main', opacity: 0.5 }} />
+        <Typography variant="caption" sx={{ fontSize: '0.55rem', color: 'success.main', opacity: 0.5, fontWeight: 600 }}>
+          TIMELINE SYNC — WAVEFORM MATCHES ANIMATION DURATION
+        </Typography>
+      </Box>
+    </Box>
+  );
+};
+
+// ===================================================================
+// FULL VIEW — Original view with trim handles (unchanged logic)
+// ===================================================================
+
+const FullWaveformCanvas = ({ peaks, currentTime, duration, audioDuration, region, onRegionChange, isPlaying }) => {
+  const canvasRef = useRef(null);
+  const containerRef = useRef(null);
+  const [dragging, setDragging] = useState(null);
+  const [hovered, setHovered] = useState(null);
+  const dragStartRef = useRef(null);
+
+  const timeToX = useCallback((time, width) => {
+    if (audioDuration <= 0) return 0;
+    return (time / audioDuration) * width;
+  }, [audioDuration]);
+
+  const xToTime = useCallback((x, width) => {
+    if (width <= 0) return 0;
+    return Math.max(0, Math.min(audioDuration, (x / width) * audioDuration));
+  }, [audioDuration]);
+
+  const draw = useCallback(() => {
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    if (!canvas || !container || !peaks || peaks.length === 0) return;
+
+    const rect = container.getBoundingClientRect();
+    const width = rect.width;
+    const height = rect.height;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    canvas.style.width = width + 'px';
+    canvas.style.height = height + 'px';
+
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, width, height);
+
+    ctx.fillStyle = BG_COLOR;
+    ctx.fillRect(0, 0, width, height);
+
+    const centerY = height / 2;
+
+    ctx.strokeStyle = CENTER_LINE;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, centerY);
+    ctx.lineTo(width, centerY);
+    ctx.stroke();
+
     const regionStartX = timeToX(region.start, width);
     const regionEndX = timeToX(region.end, width);
 
-    // Playhead position: maps animation time to audio region
     const regionDur = region.end - region.start;
     const audioPlayTime = regionDur > 0
       ? region.start + (currentTime / duration) * regionDur
       : region.start;
     const playheadX = timeToX(Math.min(audioPlayTime, audioDuration), width);
 
-    // Draw waveform bars
     const barWidth = width / peaks.length;
     for (let i = 0; i < peaks.length; i++) {
       const peak = peaks[i] || 0;
@@ -262,12 +445,10 @@ const WaveformCanvas = ({ peaks, currentTime, duration, audioDuration, region, o
       ctx.fillRect(x, centerY - halfBar, bw, barHeight);
     }
 
-    // Dim out-of-region areas
     ctx.fillStyle = DIM_OVERLAY;
     if (regionStartX > 0) ctx.fillRect(0, 0, regionStartX, height);
     if (regionEndX < width) ctx.fillRect(regionEndX, 0, width - regionEndX, height);
 
-    // Region border lines
     ctx.strokeStyle = REGION_BORDER;
     ctx.lineWidth = 2;
     [regionStartX, regionEndX].forEach(x => {
@@ -277,13 +458,10 @@ const WaveformCanvas = ({ peaks, currentTime, duration, audioDuration, region, o
       ctx.stroke();
     });
 
-    // Region shaded background (subtle)
     ctx.fillStyle = REGION_COLOR;
     ctx.fillRect(regionStartX, 0, regionEndX - regionStartX, height);
 
-    // Trim handles (triangular tabs at top)
     const handleW = 8, handleH = 14;
-    // Start handle
     ctx.fillStyle = hovered === 'start' || dragging === 'start' ? HANDLE_HOVER : HANDLE_COLOR;
     ctx.beginPath();
     ctx.moveTo(regionStartX, 0);
@@ -292,7 +470,6 @@ const WaveformCanvas = ({ peaks, currentTime, duration, audioDuration, region, o
     ctx.lineTo(regionStartX, handleH);
     ctx.closePath();
     ctx.fill();
-    // Start handle bottom tab
     ctx.beginPath();
     ctx.moveTo(regionStartX, height);
     ctx.lineTo(regionStartX + handleW, height);
@@ -301,7 +478,6 @@ const WaveformCanvas = ({ peaks, currentTime, duration, audioDuration, region, o
     ctx.closePath();
     ctx.fill();
 
-    // End handle
     ctx.fillStyle = hovered === 'end' || dragging === 'end' ? HANDLE_HOVER : HANDLE_COLOR;
     ctx.beginPath();
     ctx.moveTo(regionEndX, 0);
@@ -310,7 +486,6 @@ const WaveformCanvas = ({ peaks, currentTime, duration, audioDuration, region, o
     ctx.lineTo(regionEndX, handleH);
     ctx.closePath();
     ctx.fill();
-    // End handle bottom tab
     ctx.beginPath();
     ctx.moveTo(regionEndX, height);
     ctx.lineTo(regionEndX - handleW, height);
@@ -319,7 +494,6 @@ const WaveformCanvas = ({ peaks, currentTime, duration, audioDuration, region, o
     ctx.closePath();
     ctx.fill();
 
-    // Playhead (only if within region)
     if (playheadX >= regionStartX && playheadX <= regionEndX) {
       ctx.strokeStyle = PLAYHEAD_COLOR;
       ctx.lineWidth = 2;
@@ -334,7 +508,6 @@ const WaveformCanvas = ({ peaks, currentTime, duration, audioDuration, region, o
       ctx.fill();
     }
 
-    // Time labels at handles
     ctx.fillStyle = 'rgba(59, 130, 246, 0.9)';
     ctx.font = '9px monospace';
     ctx.textAlign = 'left';
@@ -352,7 +525,6 @@ const WaveformCanvas = ({ peaks, currentTime, duration, audioDuration, region, o
     return () => observer.disconnect();
   }, [draw]);
 
-  // ===== MOUSE INTERACTIONS =====
   const getMouseX = (e) => {
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) return 0;
@@ -370,7 +542,7 @@ const WaveformCanvas = ({ peaks, currentTime, duration, audioDuration, region, o
   };
 
   const handleMouseDown = (e) => {
-    if (isPlaying) return; // Don't allow trimming during playback
+    if (isPlaying) return;
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) return;
     const mouseX = e.clientX - rect.left;
@@ -394,7 +566,7 @@ const WaveformCanvas = ({ peaks, currentTime, duration, audioDuration, region, o
     if (dragging && dragStartRef.current) {
       const width = rect.width;
       const time = xToTime(mouseX, width);
-      const minGap = 0.2; // Minimum 200ms region
+      const minGap = 0.2;
 
       if (dragging === 'start') {
         const newStart = Math.max(0, Math.min(time, region.end - minGap));
@@ -415,7 +587,6 @@ const WaveformCanvas = ({ peaks, currentTime, duration, audioDuration, region, o
         onRegionChange({ start: Math.max(0, newStart), end: Math.min(audioDuration, newEnd) });
       }
     } else {
-      // Hover detection
       const hit = hitTest(mouseX, rect.width);
       setHovered(hit === 'start' || hit === 'end' ? hit : null);
     }
@@ -460,7 +631,6 @@ const WaveformCanvas = ({ peaks, currentTime, duration, audioDuration, region, o
         ref={canvasRef}
         style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', display: 'block', pointerEvents: 'none' }}
       />
-      {/* Label */}
       <Box sx={{ position: 'absolute', bottom: 2, left: 6, display: 'flex', alignItems: 'center', gap: 0.5, pointerEvents: 'none' }}>
         <WaveformIcon sx={{ fontSize: 10, color: 'primary.main', opacity: 0.4 }} />
         <Typography variant="caption" sx={{ fontSize: '0.55rem', color: 'primary.main', opacity: 0.4, fontWeight: 600 }}>

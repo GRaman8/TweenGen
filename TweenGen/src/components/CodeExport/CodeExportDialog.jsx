@@ -10,7 +10,7 @@ import {
 } from '@mui/icons-material';
 import {
   useCanvasObjects, useKeyframes, useDuration, useFabricCanvas,
-  useCanvasBgColor, useLoopPlayback,
+  useCanvasBgColor, useLoopPlayback, useCanvasBgImage,
 } from '../../store/hooks';
 import { useAudioFile, useAudioRegion } from '../../store/audioHooks';
 import { generateAnimationCode, downloadAllFiles, copyToClipboard } from '../../utils/codeGenerator';
@@ -22,6 +22,7 @@ const CodeExportDialog = ({ open, onClose }) => {
   const [duration] = useDuration();
   const [fabricCanvas] = useFabricCanvas();
   const [canvasBgColor] = useCanvasBgColor();
+  const [canvasBgImage] = useCanvasBgImage();
   const [loopPlayback] = useLoopPlayback();
   const [audioFile] = useAudioFile();
   const [audioRegion] = useAudioRegion();
@@ -30,8 +31,8 @@ const CodeExportDialog = ({ open, onClose }) => {
   const [copiedTab, setCopiedTab] = useState(null);
 
   const { html, css, javascript } = useMemo(() => {
-    return generateAnimationCode(canvasObjects, keyframes, duration, loopPlayback, fabricCanvas, canvasBgColor, audioFile, audioRegion);
-  }, [canvasObjects, keyframes, duration, loopPlayback, fabricCanvas, canvasBgColor, audioFile, audioRegion]);
+    return generateAnimationCode(canvasObjects, keyframes, duration, loopPlayback, fabricCanvas, canvasBgColor, audioFile, audioRegion, canvasBgImage);
+  }, [canvasObjects, keyframes, duration, loopPlayback, fabricCanvas, canvasBgColor, audioFile, audioRegion, canvasBgImage]);
 
   const handleCopy = async (text, tabName) => {
     const success = await copyToClipboard(text);

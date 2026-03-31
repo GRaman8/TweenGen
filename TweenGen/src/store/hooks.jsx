@@ -22,6 +22,7 @@ import {
   lockedTracksState,
   trackOrderState,
   canvasBgColorState,
+  canvasBgImageState,
   fillToolActiveState,
   fillToolColorState,
   hiddenTracksState,
@@ -126,6 +127,10 @@ export const useTrackOrder = () => {
 
 export const useCanvasBgColor = () => {
   return useRecoilState(canvasBgColorState);
+};
+
+export const useCanvasBgImage = () => {
+  return useRecoilState(canvasBgImageState);
 };
 
 export const useFillToolActive = () => {
