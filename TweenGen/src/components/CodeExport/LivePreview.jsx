@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { Box, Paper, Typography } from '@mui/material';
 import gsap from 'gsap';
-import { useCanvasObjects, useKeyframes, useDuration, useFabricCanvas, useCanvasBgColor } from '../../store/hooks';
+import { useCanvasObjects, useKeyframes, useDuration, useFabricCanvas, useCanvasBgColor, useCanvasBgImage } from '../../store/hooks';
 import { useAudioFile, useAudioVolume, useAudioMuted, useAudioRegion } from '../../store/audioHooks';
 import { normalizeKeyframeRotations, findSurroundingKeyframes } from '../../utils/interpolation';
 import { SVG_SHAPE_KEYS } from '../../utils/shapeDefinitions';
@@ -45,6 +45,7 @@ const LivePreview = ({ isPreviewVisible = false }) => {
   const [duration] = useDuration();
   const [fabricCanvas] = useFabricCanvas();
   const [canvasBgColor] = useCanvasBgColor();
+  const [canvasBgImage] = useCanvasBgImage();
   const [audioFile] = useAudioFile();
   const [audioVolume] = useAudioVolume();
   const [audioMuted] = useAudioMuted();
@@ -53,7 +54,6 @@ const LivePreview = ({ isPreviewVisible = false }) => {
   const timelineRef = useRef(null);
   const audioRef = useRef(null);
 
-  // Create/destroy preview audio element
   useEffect(() => {
     if (audioFile?.dataURL) {
       const audio = new Audio(audioFile.dataURL);
@@ -66,12 +66,10 @@ const LivePreview = ({ isPreviewVisible = false }) => {
     }
   }, [audioFile?.dataURL]);
 
-  // Sync volume/mute
   useEffect(() => {
     if (audioRef.current) audioRef.current.volume = audioMuted ? 0 : audioVolume;
   }, [audioVolume, audioMuted]);
 
-  // ===== PAUSE AUDIO WHEN TAB IS HIDDEN, RESUME WHEN VISIBLE =====
   useEffect(() => {
     if (!isPreviewVisible) {
       if (audioRef.current) audioRef.current.pause();
@@ -89,7 +87,6 @@ const LivePreview = ({ isPreviewVisible = false }) => {
     }
   }, [isPreviewVisible]);
 
-  // Map animation time to audio time using region
   const mapAnimTimeToAudioTime = (animTime) => {
     const audioDur = audioFile?.duration || 0;
     if (!audioRegion) return Math.min(animTime, audioDur);
@@ -99,11 +96,25 @@ const LivePreview = ({ isPreviewVisible = false }) => {
     return audioRegion.start + ratio * regionDur;
   };
 
-  // ===== BUILD GSAP TIMELINE =====
   useEffect(() => {
     if (!containerRef.current) return;
     containerRef.current.innerHTML = '';
     if (timelineRef.current) timelineRef.current.kill();
+
+    // Add background image if present
+    if (canvasBgImage?.dataURL) {
+      const bgImg = document.createElement('img');
+      bgImg.src = canvasBgImage.dataURL;
+      bgImg.style.position = 'absolute';
+      bgImg.style.top = '0';
+      bgImg.style.left = '0';
+      bgImg.style.width = '100%';
+      bgImg.style.height = '100%';
+      bgImg.style.objectFit = 'cover';
+      bgImg.style.pointerEvents = 'none';
+      bgImg.style.zIndex = '-1';
+      containerRef.current.appendChild(bgImg);
+    }
 
     timelineRef.current = gsap.timeline({ repeat: -1, paused: true });
 
@@ -128,7 +139,6 @@ const LivePreview = ({ isPreviewVisible = false }) => {
       else renderRegular(obj, objKfs, allNormalizedKfs);
     });
 
-    // Audio sync callbacks
     const tl = timelineRef.current;
     if (audioRef.current) {
       const audio = audioRef.current;
@@ -159,9 +169,8 @@ const LivePreview = ({ isPreviewVisible = false }) => {
       if (timelineRef.current) timelineRef.current.kill();
       if (audioRef.current) audioRef.current.pause();
     };
-  }, [canvasObjects, keyframes, duration, fabricCanvas, canvasBgColor, audioFile, audioRegion]);
+  }, [canvasObjects, keyframes, duration, fabricCanvas, canvasBgColor, canvasBgImage, audioFile, audioRegion]);
 
-  // ===== RENDER HELPERS =====
   const animateElement = (el, objKfs, allNormalizedKfs, anchorX, anchorY, ew, eh, fillTarget = null, fillProp = null) => {
     const timeline = timelineRef.current;
     for (let i = 1; i < objKfs.length; i++) {
@@ -181,24 +190,16 @@ const LivePreview = ({ isPreviewVisible = false }) => {
     }
   };
 
-  /**
-   * Apply outline styles to a preview element based on object data.
-   * CSS shapes get CSS outline, SVG shapes get stroke attrs, text gets -webkit-text-stroke.
-   */
   const applyOutline = (el, obj, pathEl = null) => {
     const outlineWidth = obj.outlineWidth || 0;
     const outlineColor = obj.outlineColor || '#000000';
     if (outlineWidth <= 0) return;
-
     if (pathEl) {
-      // SVG shape — apply stroke to the <path> element
       pathEl.setAttribute('stroke', outlineColor);
       pathEl.setAttribute('stroke-width', outlineWidth.toString());
     } else if (obj.type === 'text') {
-      // Text — use -webkit-text-stroke
       el.style.webkitTextStroke = `${outlineWidth}px ${outlineColor}`;
     } else {
-      // CSS shape (rect, circle, etc.) — use CSS outline
       el.style.outline = `${outlineWidth}px solid ${outlineColor}`;
     }
   };
@@ -216,7 +217,6 @@ const LivePreview = ({ isPreviewVisible = false }) => {
     svg.setAttribute('viewBox','0 0 100 100'); svg.setAttribute('width','100%'); svg.setAttribute('height','100%'); svg.style.display='block';
     const pathEl = document.createElementNS('http://www.w3.org/2000/svg','path');
     pathEl.setAttribute('d',obj.svgPath||''); pathEl.setAttribute('fill',fillColor);
-    // Apply outline as SVG stroke
     applyOutline(wrapper, obj, pathEl);
     svg.appendChild(pathEl); wrapper.appendChild(svg); container.appendChild(wrapper);
     gsap.set(wrapper,{scaleX:firstKf.properties.scaleX,scaleY:firstKf.properties.scaleY,rotation:firstKf.properties.rotation,opacity:firstKf.properties.opacity});
@@ -232,8 +232,7 @@ const LivePreview = ({ isPreviewVisible = false }) => {
     else if(obj.type==='circle'){el.style.width=ew+'px';el.style.height=eh+'px';el.style.borderRadius='50%';el.style.backgroundColor=fillColor;}
     else if(obj.type==='roundedRect'){el.style.width=ew+'px';el.style.height=eh+'px';el.style.borderRadius='16px';el.style.backgroundColor=fillColor;}
     else if(obj.type==='ellipse'){eh=76;el.style.width=ew+'px';el.style.height=eh+'px';el.style.borderRadius='50%';el.style.backgroundColor=fillColor;}
-    else if(obj.type==='text'){const fo=fabricCanvas?.getObjects().find(o=>o.id===obj.id);el.textContent=fo?.text||obj.textContent||'Text';el.style.fontSize='24px';el.style.color=fillColor;el.style.whiteSpace='nowrap';}
-    // Apply outline
+    else if(obj.type==='text'){const fo=fabricCanvas?.getObjects().find(o=>o.id===obj.id);el.textContent=fo?.text||obj.textContent||'Text';el.style.fontSize=(fo?.fontSize||24)+'px';el.style.color=fillColor;el.style.whiteSpace='nowrap';}
     applyOutline(el, obj);
     el.style.transformOrigin=`${anchorX*100}% ${anchorY*100}%`;
     el.style.zIndex=(firstKf.properties.zIndex??0).toString();
@@ -292,128 +291,57 @@ const LivePreview = ({ isPreviewVisible = false }) => {
     el.style.left=(relLeft-cw/2)+'px';el.style.top=(relTop-ch/2)+'px';if(angle)el.style.transform=`rotate(${angle}deg)`;parentEl.appendChild(el);
   };
 
-  /**
-   * Render a deformed shape using the same wrapper approach as freehand paths.
-   * Uses a 0×0 wrapper div at (x,y) with an SVG that translates by -pathOffset.
-   * This exactly mirrors how fabric.Path positions internally, avoiding the
-   * center-point mismatch that occurs with the 100×100 div approach.
-   */
   const renderDeformedShape = (obj, objKfs, allNormalizedKfs) => {
     const container = containerRef.current; const timeline = timelineRef.current;
     const fo = fabricCanvas?.getObjects().find(o => o.id === obj.id);
     const firstKf = objKfs[0];
     const fillColor = firstKf.properties.fill || obj.fill || '#000000';
-
-    // Get pathOffset and dimensions from stored data or live fabric object
     const pathOffsetX = fo?.pathOffset?.x || obj.deformedPathOffsetX || 50;
     const pathOffsetY = fo?.pathOffset?.y || obj.deformedPathOffsetY || 50;
     const width = fo?.width || obj.deformedPathWidth || 100;
     const height = fo?.height || obj.deformedPathHeight || 100;
     const anchorX = obj.anchorX ?? 0.5;
     const anchorY = obj.anchorY ?? 0.5;
-
-    // Translation offset — same formula as renderPath
     const transX = pathOffsetX + (anchorX - 0.5) * width;
     const transY = pathOffsetY + (anchorY - 0.5) * height;
-
-    // Wrapper div at exact (x, y) — 0×0 with overflow visible
     const wrapper = document.createElement('div');
-    wrapper.id = obj.id;
-    wrapper.style.position = 'absolute';
-    wrapper.style.left = firstKf.properties.x + 'px';
-    wrapper.style.top = firstKf.properties.y + 'px';
-    wrapper.style.width = '0px';
-    wrapper.style.height = '0px';
-    wrapper.style.overflow = 'visible';
+    wrapper.id = obj.id; wrapper.style.position = 'absolute';
+    wrapper.style.left = firstKf.properties.x + 'px'; wrapper.style.top = firstKf.properties.y + 'px';
+    wrapper.style.width = '0px'; wrapper.style.height = '0px'; wrapper.style.overflow = 'visible';
     wrapper.style.transformOrigin = '0px 0px';
     wrapper.style.zIndex = (firstKf.properties.zIndex ?? 0).toString();
-
-    // SVG with translated <g> to align path coordinates to wrapper origin
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.style.position = 'absolute';
-    svg.style.left = '0px';
-    svg.style.top = '0px';
-    svg.style.overflow = 'visible';
-    svg.setAttribute('width', '1');
-    svg.setAttribute('height', '1');
-
+    svg.style.position = 'absolute'; svg.style.left = '0px'; svg.style.top = '0px';
+    svg.style.overflow = 'visible'; svg.setAttribute('width', '1'); svg.setAttribute('height', '1');
     const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     g.setAttribute('transform', `translate(${-transX},${-transY})`);
-
     const pathEl = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    pathEl.setAttribute('d', obj.deformedPath);
-    pathEl.setAttribute('fill', fillColor);
-
-    // Apply outline
+    pathEl.setAttribute('d', obj.deformedPath); pathEl.setAttribute('fill', fillColor);
     const outlineWidth = obj.outlineWidth || 0;
     const outlineColor = obj.outlineColor || '#000000';
     if (outlineWidth > 0) {
       pathEl.setAttribute('stroke', outlineColor);
       pathEl.setAttribute('stroke-width', outlineWidth.toString());
     }
-
-    g.appendChild(pathEl);
-    svg.appendChild(g);
-    wrapper.appendChild(svg);
-    container.appendChild(wrapper);
-
-    gsap.set(wrapper, {
-      scaleX: firstKf.properties.scaleX,
-      scaleY: firstKf.properties.scaleY,
-      rotation: firstKf.properties.rotation,
-      opacity: firstKf.properties.opacity,
-    });
-
-    // Animate using direct (x, y) positioning — same as renderPath
+    g.appendChild(pathEl); svg.appendChild(g); wrapper.appendChild(svg); container.appendChild(wrapper);
+    gsap.set(wrapper, { scaleX: firstKf.properties.scaleX, scaleY: firstKf.properties.scaleY, rotation: firstKf.properties.rotation, opacity: firstKf.properties.opacity });
     for (let i = 1; i < objKfs.length; i++) {
-      const prev = objKfs[i - 1];
-      const curr = objKfs[i];
-      const dur = curr.time - prev.time;
-      const ease = curr.easing || 'none';
+      const prev = objKfs[i - 1]; const curr = objKfs[i];
+      const dur = curr.time - prev.time; const ease = curr.easing || 'none';
       const gs = findGlobalZSwapForSegment(allNormalizedKfs, prev.time, curr.time);
-
-      // Position, scale, rotation, opacity tween
-      timeline.to(wrapper, {
-        duration: dur,
-        left: curr.properties.x + 'px',
-        top: curr.properties.y + 'px',
-        scaleX: curr.properties.scaleX,
-        scaleY: curr.properties.scaleY,
-        rotation: curr.properties.rotation,
-        opacity: curr.properties.opacity,
-        ease: ease,
-      }, prev.time);
-
+      timeline.to(wrapper, { duration: dur, left: curr.properties.x + 'px', top: curr.properties.y + 'px',
+        scaleX: curr.properties.scaleX, scaleY: curr.properties.scaleY, rotation: curr.properties.rotation,
+        opacity: curr.properties.opacity, ease: ease }, prev.time);
       addZSwapTween(timeline, wrapper, prev, curr, gs);
-
-      // Fill color animation
-      const prevFill = prev.properties.fill;
-      const currFill = curr.properties.fill;
+      const prevFill = prev.properties.fill; const currFill = curr.properties.fill;
       if (prevFill && currFill && prevFill !== currFill) {
-        timeline.to(pathEl, {
-          duration: dur,
-          attr: { fill: currFill },
-          ease: ease,
-        }, prev.time);
+        timeline.to(pathEl, { duration: dur, attr: { fill: currFill }, ease: ease }, prev.time);
       }
-
-      // Path morphing animation (e.g., triangle → cone)
-      // Uses a dummy { t } object animated from 0→1, with onUpdate
-      // interpolating the SVG path string each frame.
-      const prevPath = prev.properties.deformedPath;
-      const currPath = curr.properties.deformedPath;
+      const prevPath = prev.properties.deformedPath; const currPath = curr.properties.deformedPath;
       if (prevPath && currPath && prevPath !== currPath) {
         const morphProgress = { t: 0 };
-        timeline.to(morphProgress, {
-          t: 1,
-          duration: dur,
-          ease: ease,
-          onUpdate: () => {
-            const interpolatedD = interpolatePathStrings(
-              prevPath, currPath, morphProgress.t
-            );
-            pathEl.setAttribute('d', interpolatedD);
-          },
+        timeline.to(morphProgress, { t: 1, duration: dur, ease: ease,
+          onUpdate: () => { const interpolatedD = interpolatePathStrings(prevPath, currPath, morphProgress.t); pathEl.setAttribute('d', interpolatedD); },
         }, prev.time);
       }
     }

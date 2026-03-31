@@ -2,8 +2,8 @@
  * Code Generator — Produces standalone HTML/CSS/JS animation
  *
  * Supports: all shapes, deformed shapes (path morphing), paths, groups,
- * images (bitmap + vector), canvas bg, color animation, outlines,
- * audio with trim region.
+ * images (bitmap + vector), canvas bg, canvas bg image, color animation,
+ * outlines, audio with trim region.
  */
 
 import { normalizeKeyframeRotations, findSurroundingKeyframes } from './interpolation';
@@ -19,9 +19,6 @@ const CANVAS_HEIGHT = 800;
 // Utility helpers
 // ===================================================================
 
-/**
- * Convert a Fabric.js path array to an SVG path string.
- */
 const fabricPathToSVGPath = (pathArray) => {
   if (!pathArray || !Array.isArray(pathArray)) return '';
   return pathArray
@@ -31,9 +28,6 @@ const fabricPathToSVGPath = (pathArray) => {
     .trim();
 };
 
-/**
- * Find the global z-swap point for a time segment across all objects.
- */
 const findGlobalZSwapForSegment = (allNormalizedKfs, prevTime, currTime) => {
   const midTime = (prevTime + currTime) / 2;
   let globalSwap = null;
@@ -56,9 +50,6 @@ const findGlobalZSwapForSegment = (allNormalizedKfs, prevTime, currTime) => {
   return globalSwap ?? 0.5;
 };
 
-/**
- * Generate a gsap.set() call for z-index swap if needed.
- */
 const generateZSwapCode = (selector, prev, curr, globalSwapPoint) => {
   const prevZ = prev.properties.zIndex ?? 0;
   const currZ = curr.properties.zIndex ?? 0;
@@ -68,9 +59,6 @@ const generateZSwapCode = (selector, prev, curr, globalSwapPoint) => {
   return `    tl.set('${selector}', { zIndex: ${currZ} }, ${swapTime.toFixed(2)});\n`;
 };
 
-/**
- * Generate fill color animation code between two keyframes.
- */
 const generateFillAnimCode = (objId, objType, prev, curr) => {
   const prevFill = prev.properties.fill;
   const currFill = curr.properties.fill;
@@ -91,9 +79,6 @@ const generateFillAnimCode = (objId, objType, prev, curr) => {
   return `    tl.to('#${objId}', {\n      duration: ${dur}, backgroundColor: '${currFill}', ease: '${ease}'\n    }, ${time});\n`;
 };
 
-/**
- * Map internal easing names to GSAP equivalents.
- */
 const mapEasingToGSAP = (easing) => {
   const map = {
     linear: 'none',
@@ -112,9 +97,6 @@ const mapEasingToGSAP = (easing) => {
   return map[easing] || 'none';
 };
 
-/**
- * Get a default fill color for a shape type.
- */
 const getDefaultFillColor = (type) => {
   switch (type) {
     case 'rectangle':
@@ -131,9 +113,6 @@ const getDefaultFillColor = (type) => {
   }
 };
 
-/**
- * Escape a string for use inside a JS single-quoted string.
- */
 const escapeJSString = (str) => {
   return str
     .replace(/\\/g, '\\\\')
@@ -142,9 +121,6 @@ const escapeJSString = (str) => {
     .replace(/\r/g, '\\r');
 };
 
-/**
- * Generate CSS outline declaration for a shape.
- */
 const getOutlineCSS = (obj) => {
   const ow = obj.outlineWidth || 0;
   const oc = obj.outlineColor || '#000000';
@@ -156,9 +132,6 @@ const getOutlineCSS = (obj) => {
   return `    outline: ${ow}px solid ${oc};\n`;
 };
 
-/**
- * Generate SVG stroke attributes for an SVG shape.
- */
 const getSvgStrokeAttr = (obj) => {
   const ow = obj.outlineWidth || 0;
   const oc = obj.outlineColor || '#000000';
@@ -174,10 +147,11 @@ export const generateAnimationCode = (
   canvasObjects, keyframes, duration,
   loopPlayback = false, fabricCanvas = null,
   canvasBgColor = '#f0f0f0',
-  audioFile = null, audioRegion = null
+  audioFile = null, audioRegion = null,
+  canvasBgImage = null
 ) => {
   const html = generateHTML();
-  const css = generateCSS(canvasObjects, keyframes, fabricCanvas, canvasBgColor);
+  const css = generateCSS(canvasObjects, keyframes, fabricCanvas, canvasBgColor, canvasBgImage);
   const javascript = generateJavaScript(
     canvasObjects, keyframes, duration,
     loopPlayback, fabricCanvas, audioFile, audioRegion
@@ -210,7 +184,15 @@ const generateHTML = () => {
 // CSS generation
 // ===================================================================
 
-const generateCSS = (canvasObjects, keyframes, fabricCanvas, canvasBgColor) => {
+const generateCSS = (canvasObjects, keyframes, fabricCanvas, canvasBgColor, canvasBgImage) => {
+  // Build background styles
+  let bgStyles = `    background-color: ${canvasBgColor};\n`;
+  if (canvasBgImage?.dataURL) {
+    bgStyles += `    background-image: url('${canvasBgImage.dataURL}');\n`;
+    bgStyles += `    background-size: cover;\n`;
+    bgStyles += `    background-position: center;\n`;
+  }
+
   let css = `/* Generated Animation Styles */
 
 body {
@@ -224,15 +206,13 @@ body {
     position: relative;
     width: ${CANVAS_WIDTH}px;
     height: ${CANVAS_HEIGHT}px;
-    background-color: ${canvasBgColor};
-    margin: 20px auto;
+${bgStyles}    margin: 20px auto;
     border: 1px solid #ccc;
     overflow: hidden;
 }
 
 `;
 
-  // Identify group children (they don't get individual CSS)
   const groupChildren = new Set();
   canvasObjects.forEach(obj => {
     if (obj.type === 'group' && obj.children) {
@@ -240,15 +220,12 @@ body {
     }
   });
 
-  // Generate CSS for CSS-rendered shapes only
-  // (Paths, groups, images, SVG shapes, and deformed shapes are all JS-created)
   canvasObjects.forEach(obj => {
     if (groupChildren.has(obj.id)) return;
 
     const rawKfs = keyframes[obj.id] || [];
     if (rawKfs.length === 0) return;
 
-    // Skip types that are created entirely in JS
     if (
       obj.type === 'path' ||
       obj.type === 'group' ||
@@ -311,12 +288,10 @@ const generateJavaScript = (
     ? `audio.${getAudioExtension(audioFile.fileName, audioFile.mimeType)}`
     : null;
 
-  // Audio region
   const regionStart = audioRegion ? audioRegion.start : 0;
   const regionEnd = audioRegion ? audioRegion.end : (audioFile?.duration || duration);
   const regionDur = regionEnd - regionStart;
 
-  // Check if any deformed shapes need path morphing
   const hasPathMorphing = canvasObjects.some(obj => {
     if (!obj.deformedPath) return false;
     const kfs = keyframes[obj.id] || [];
@@ -337,19 +312,16 @@ const generateJavaScript = (
   js += hasAudio ? `,\n        paused: true\n` : `\n`;
   js += `    });\n\n`;
 
-  // Include path interpolation function if morphing is used
   if (hasPathMorphing) {
     js += `    // ===== PATH MORPHING UTILITY =====\n`;
     js += PATH_INTERP_CODE;
     js += `\n`;
   }
 
-  // Audio setup
   if (hasAudio) {
     js += generateAudioSetup(audioFileName, regionStart, regionEnd, regionDur, duration);
   }
 
-  // Identify group children and pre-normalize keyframes
   const groupChildren = new Set();
   canvasObjects.forEach(obj => {
     if (obj.type === 'group' && obj.children) {
@@ -365,7 +337,6 @@ const generateJavaScript = (
     allNormalizedKfs[obj.id] = normalizeKeyframeRotations(rawKfs);
   });
 
-  // ===== Element creation =====
   canvasObjects.forEach(obj => {
     const objKfs = allNormalizedKfs[obj.id];
     if (!objKfs || objKfs.length === 0 || groupChildren.has(obj.id)) return;
@@ -386,7 +357,6 @@ const generateJavaScript = (
     }
   });
 
-  // ===== Animation tweens =====
   canvasObjects.forEach(obj => {
     const objKfs = allNormalizedKfs[obj.id];
     if (!objKfs || objKfs.length < 2 || groupChildren.has(obj.id)) return;
@@ -437,7 +407,6 @@ const generateAudioSetup = (fileName, regionStart, regionEnd, regionDur, duratio
         return AUDIO_REGION_START + (t / ANIM_DURATION) * AUDIO_REGION_DUR;
     }
 
-    // Click-to-start overlay (browser autoplay policy)
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;' +
         'display:flex;align-items:center;justify-content:center;' +
@@ -476,14 +445,10 @@ const generateAudioSetup = (fileName, regionStart, regionEnd, regionDur, duratio
 // Element creation functions
 // ===================================================================
 
-/**
- * Create an SVG shape (triangle, star, etc.) — uses viewBox 0 0 100 100.
- */
 const generateSvgShapeCreation = (obj, firstKf) => {
   const ax = obj.anchorX ?? 0.5;
   const ay = obj.anchorY ?? 0.5;
-  const ew = 100;
-  const eh = 100;
+  const ew = 100, eh = 100;
   const z = firstKf.properties.zIndex ?? 0;
   const fillColor = firstKf.properties.fill || obj.fill || '#000000';
   const strokeAttr = getSvgStrokeAttr(obj);
@@ -498,21 +463,12 @@ const generateSvgShapeCreation = (obj, firstKf) => {
   js += `    ${obj.id}.style.left = '${(firstKf.properties.x - ax * ew).toFixed(2)}px';\n`;
   js += `    ${obj.id}.style.top = '${(firstKf.properties.y - ay * eh).toFixed(2)}px';\n`;
   js += `    ${obj.id}.style.zIndex = '${z}';\n`;
-  js += `    ${obj.id}.innerHTML = '<svg viewBox="0 0 100 100" width="100%" height="100%"`;
-  js += ` style="display:block"><path d="${obj.svgPath}" fill="${fillColor}"${strokeAttr}/></svg>';\n`;
+  js += `    ${obj.id}.innerHTML = '<svg viewBox="0 0 100 100" width="100%" height="100%" style="display:block"><path d="${obj.svgPath}" fill="${fillColor}"${strokeAttr}/></svg>';\n`;
   js += `    container.appendChild(${obj.id});\n`;
-  js += `    gsap.set(${obj.id}, {\n`;
-  js += `        scaleX: ${firstKf.properties.scaleX.toFixed(2)},\n`;
-  js += `        scaleY: ${firstKf.properties.scaleY.toFixed(2)},\n`;
-  js += `        rotation: ${firstKf.properties.rotation.toFixed(2)},\n`;
-  js += `        opacity: ${firstKf.properties.opacity.toFixed(2)}\n`;
-  js += `    });\n\n`;
+  js += `    gsap.set(${obj.id}, { scaleX: ${firstKf.properties.scaleX.toFixed(2)}, scaleY: ${firstKf.properties.scaleY.toFixed(2)}, rotation: ${firstKf.properties.rotation.toFixed(2)}, opacity: ${firstKf.properties.opacity.toFixed(2)} });\n\n`;
   return js;
 };
 
-/**
- * Create a deformed shape using the wrapper approach (0×0 div + SVG with translate).
- */
 const generateDeformedShapeCreation = (obj, firstKf, fabricCanvas) => {
   const fo = fabricCanvas?.getObjects().find(o => o.id === obj.id);
   const pathOffsetX = fo?.pathOffset?.x || obj.deformedPathOffsetX || 50;
@@ -527,8 +483,6 @@ const generateDeformedShapeCreation = (obj, firstKf, fabricCanvas) => {
   const fillColor = firstKf.properties.fill || obj.fill || '#000000';
   const ow = obj.outlineWidth || 0;
   const oc = obj.outlineColor || '#000000';
-
-  // Use the keyframe's path if available, otherwise the object's deformed path
   const pathD = firstKf.properties.deformedPath || obj.deformedPath;
 
   let js = `    // Create ${obj.name} (Deformed Shape)\n`;
@@ -537,21 +491,15 @@ const generateDeformedShapeCreation = (obj, firstKf, fabricCanvas) => {
   js += `    ${obj.id}.style.position = 'absolute';\n`;
   js += `    ${obj.id}.style.left = '${firstKf.properties.x.toFixed(2)}px';\n`;
   js += `    ${obj.id}.style.top = '${firstKf.properties.y.toFixed(2)}px';\n`;
-  js += `    ${obj.id}.style.width = '0px';\n`;
-  js += `    ${obj.id}.style.height = '0px';\n`;
+  js += `    ${obj.id}.style.width = '0px'; ${obj.id}.style.height = '0px';\n`;
   js += `    ${obj.id}.style.overflow = 'visible';\n`;
   js += `    ${obj.id}.style.transformOrigin = '0px 0px';\n`;
   js += `    ${obj.id}.style.zIndex = '${z}';\n\n`;
-
   js += `    var svg_${obj.id} = document.createElementNS('http://www.w3.org/2000/svg', 'svg');\n`;
-  js += `    svg_${obj.id}.style.position = 'absolute';\n`;
-  js += `    svg_${obj.id}.style.overflow = 'visible';\n`;
-  js += `    svg_${obj.id}.setAttribute('width', '1');\n`;
-  js += `    svg_${obj.id}.setAttribute('height', '1');\n\n`;
-
+  js += `    svg_${obj.id}.style.position = 'absolute'; svg_${obj.id}.style.overflow = 'visible';\n`;
+  js += `    svg_${obj.id}.setAttribute('width', '1'); svg_${obj.id}.setAttribute('height', '1');\n\n`;
   js += `    var g_${obj.id} = document.createElementNS('http://www.w3.org/2000/svg', 'g');\n`;
   js += `    g_${obj.id}.setAttribute('transform', 'translate(${(-transX).toFixed(2)}, ${(-transY).toFixed(2)})');\n\n`;
-
   js += `    var p_${obj.id} = document.createElementNS('http://www.w3.org/2000/svg', 'path');\n`;
   js += `    p_${obj.id}.setAttribute('d', '${pathD}');\n`;
   js += `    p_${obj.id}.setAttribute('fill', '${fillColor}');\n`;
@@ -559,24 +507,12 @@ const generateDeformedShapeCreation = (obj, firstKf, fabricCanvas) => {
     js += `    p_${obj.id}.setAttribute('stroke', '${oc}');\n`;
     js += `    p_${obj.id}.setAttribute('stroke-width', '${ow}');\n`;
   }
-  js += `\n`;
-
-  js += `    g_${obj.id}.appendChild(p_${obj.id});\n`;
-  js += `    svg_${obj.id}.appendChild(g_${obj.id});\n`;
-  js += `    ${obj.id}.appendChild(svg_${obj.id});\n`;
+  js += `    g_${obj.id}.appendChild(p_${obj.id}); svg_${obj.id}.appendChild(g_${obj.id}); ${obj.id}.appendChild(svg_${obj.id});\n`;
   js += `    container.appendChild(${obj.id});\n`;
-  js += `    gsap.set(${obj.id}, {\n`;
-  js += `        scaleX: ${firstKf.properties.scaleX.toFixed(2)},\n`;
-  js += `        scaleY: ${firstKf.properties.scaleY.toFixed(2)},\n`;
-  js += `        rotation: ${firstKf.properties.rotation.toFixed(2)},\n`;
-  js += `        opacity: ${firstKf.properties.opacity.toFixed(2)}\n`;
-  js += `    });\n\n`;
+  js += `    gsap.set(${obj.id}, { scaleX: ${firstKf.properties.scaleX.toFixed(2)}, scaleY: ${firstKf.properties.scaleY.toFixed(2)}, rotation: ${firstKf.properties.rotation.toFixed(2)}, opacity: ${firstKf.properties.opacity.toFixed(2)} });\n\n`;
   return js;
 };
 
-/**
- * Create a bitmap or vector image.
- */
 const generateImageCreation = (obj, firstKf) => {
   const ax = obj.anchorX ?? 0.5;
   const ay = obj.anchorY ?? 0.5;
@@ -590,54 +526,35 @@ const generateImageCreation = (obj, firstKf) => {
   if (useVector) {
     const { width: traceW, height: traceH, innerSVG } = parseSVGDimensions(obj.svgTracedData);
     const escapedInner = escapeJSString(innerSVG);
-
     js += `    // Create ${obj.name} (Vector SVG)\n`;
     js += `    const ${obj.id} = document.createElement('div');\n`;
     js += `    ${obj.id}.id = '${obj.id}';\n`;
-    js += `    ${obj.id}.style.position = 'absolute';\n`;
-    js += `    ${obj.id}.style.width = '${ew}px';\n`;
-    js += `    ${obj.id}.style.height = '${eh}px';\n`;
+    js += `    ${obj.id}.style.position = 'absolute'; ${obj.id}.style.width = '${ew}px'; ${obj.id}.style.height = '${eh}px';\n`;
     js += `    ${obj.id}.style.transformOrigin = '${(ax * 100).toFixed(0)}% ${(ay * 100).toFixed(0)}%';\n`;
     js += `    ${obj.id}.style.left = '${(firstKf.properties.x - ax * ew).toFixed(2)}px';\n`;
     js += `    ${obj.id}.style.top = '${(firstKf.properties.y - ay * eh).toFixed(2)}px';\n`;
-    js += `    ${obj.id}.style.zIndex = '${z}';\n`;
-    js += `    ${obj.id}.style.pointerEvents = 'none';\n`;
-    js += `    ${obj.id}.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg"`;
-    js += ` viewBox="0 0 ${traceW} ${traceH}" width="${ew}" height="${eh}"`;
-    js += ` preserveAspectRatio="none" style="display:block">${escapedInner}</svg>';\n`;
+    js += `    ${obj.id}.style.zIndex = '${z}'; ${obj.id}.style.pointerEvents = 'none';\n`;
+    js += `    ${obj.id}.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${traceW} ${traceH}" width="${ew}" height="${eh}" preserveAspectRatio="none" style="display:block">${escapedInner}</svg>';\n`;
   } else {
     js += `    // Create ${obj.name} (Bitmap Image)\n`;
     js += `    const ${obj.id} = document.createElement('img');\n`;
-    js += `    ${obj.id}.id = '${obj.id}';\n`;
-    js += `    ${obj.id}.src = '${obj.imageDataURL}';\n`;
-    js += `    ${obj.id}.style.position = 'absolute';\n`;
-    js += `    ${obj.id}.style.width = '${ew}px';\n`;
-    js += `    ${obj.id}.style.height = '${eh}px';\n`;
+    js += `    ${obj.id}.id = '${obj.id}'; ${obj.id}.src = '${obj.imageDataURL}';\n`;
+    js += `    ${obj.id}.style.position = 'absolute'; ${obj.id}.style.width = '${ew}px'; ${obj.id}.style.height = '${eh}px';\n`;
     js += `    ${obj.id}.style.transformOrigin = '${(ax * 100).toFixed(0)}% ${(ay * 100).toFixed(0)}%';\n`;
     js += `    ${obj.id}.style.left = '${(firstKf.properties.x - ax * ew).toFixed(2)}px';\n`;
     js += `    ${obj.id}.style.top = '${(firstKf.properties.y - ay * eh).toFixed(2)}px';\n`;
-    js += `    ${obj.id}.style.zIndex = '${z}';\n`;
-    js += `    ${obj.id}.style.pointerEvents = 'none';\n`;
+    js += `    ${obj.id}.style.zIndex = '${z}'; ${obj.id}.style.pointerEvents = 'none';\n`;
   }
 
   js += `    container.appendChild(${obj.id});\n`;
-  js += `    gsap.set(${obj.id}, {\n`;
-  js += `        scaleX: ${firstKf.properties.scaleX.toFixed(2)},\n`;
-  js += `        scaleY: ${firstKf.properties.scaleY.toFixed(2)},\n`;
-  js += `        rotation: ${firstKf.properties.rotation.toFixed(2)},\n`;
-  js += `        opacity: ${firstKf.properties.opacity.toFixed(2)}\n`;
-  js += `    });\n\n`;
+  js += `    gsap.set(${obj.id}, { scaleX: ${firstKf.properties.scaleX.toFixed(2)}, scaleY: ${firstKf.properties.scaleY.toFixed(2)}, rotation: ${firstKf.properties.rotation.toFixed(2)}, opacity: ${firstKf.properties.opacity.toFixed(2)} });\n\n`;
   return js;
 };
 
-/**
- * Create a CSS-rendered shape (rectangle, circle, text, etc.).
- */
 const generateRegularCreation = (obj, firstKf) => {
   const ax = obj.anchorX ?? 0.5;
   const ay = obj.anchorY ?? 0.5;
-  let ew = 100;
-  let eh = 100;
+  let ew = 100, eh = 100;
   if (obj.type === 'ellipse') eh = 76;
   const fillColor = firstKf.properties.fill || obj.fill || getDefaultFillColor(obj.type);
   const z = firstKf.properties.zIndex ?? 0;
@@ -646,161 +563,87 @@ const generateRegularCreation = (obj, firstKf) => {
 
   let js = `    // Create ${obj.name}\n`;
   js += `    const ${obj.id} = document.createElement('div');\n`;
-  js += `    ${obj.id}.id = '${obj.id}';\n`;
-  js += `    ${obj.id}.style.position = 'absolute';\n`;
+  js += `    ${obj.id}.id = '${obj.id}'; ${obj.id}.style.position = 'absolute';\n`;
   js += `    ${obj.id}.style.transformOrigin = '${(ax * 100).toFixed(0)}% ${(ay * 100).toFixed(0)}%';\n`;
   js += `    ${obj.id}.style.left = '${(firstKf.properties.x - ax * ew).toFixed(2)}px';\n`;
   js += `    ${obj.id}.style.top = '${(firstKf.properties.y - ay * eh).toFixed(2)}px';\n`;
   js += `    ${obj.id}.style.zIndex = '${z}';\n`;
 
   switch (obj.type) {
-    case 'rectangle':
-      js += `    ${obj.id}.style.width = '100px';\n    ${obj.id}.style.height = '100px';\n`;
-      js += `    ${obj.id}.style.backgroundColor = '${fillColor}';\n`;
-      break;
-    case 'circle':
-      js += `    ${obj.id}.style.width = '100px';\n    ${obj.id}.style.height = '100px';\n`;
-      js += `    ${obj.id}.style.borderRadius = '50%';\n    ${obj.id}.style.backgroundColor = '${fillColor}';\n`;
-      break;
-    case 'roundedRect':
-      js += `    ${obj.id}.style.width = '100px';\n    ${obj.id}.style.height = '100px';\n`;
-      js += `    ${obj.id}.style.borderRadius = '16px';\n    ${obj.id}.style.backgroundColor = '${fillColor}';\n`;
-      break;
-    case 'ellipse':
-      js += `    ${obj.id}.style.width = '100px';\n    ${obj.id}.style.height = '76px';\n`;
-      js += `    ${obj.id}.style.borderRadius = '50%';\n    ${obj.id}.style.backgroundColor = '${fillColor}';\n`;
-      break;
-    case 'text':
-      js += `    ${obj.id}.textContent = '${(obj.textContent || 'Text').replace(/'/g, "\\'")}';\n`;
-      js += `    ${obj.id}.style.fontSize = '24px';\n    ${obj.id}.style.color = '${fillColor}';\n`;
-      js += `    ${obj.id}.style.whiteSpace = 'nowrap';\n`;
-      break;
-    default:
-      break;
+    case 'rectangle': js += `    ${obj.id}.style.width = '100px'; ${obj.id}.style.height = '100px'; ${obj.id}.style.backgroundColor = '${fillColor}';\n`; break;
+    case 'circle': js += `    ${obj.id}.style.width = '100px'; ${obj.id}.style.height = '100px'; ${obj.id}.style.borderRadius = '50%'; ${obj.id}.style.backgroundColor = '${fillColor}';\n`; break;
+    case 'roundedRect': js += `    ${obj.id}.style.width = '100px'; ${obj.id}.style.height = '100px'; ${obj.id}.style.borderRadius = '16px'; ${obj.id}.style.backgroundColor = '${fillColor}';\n`; break;
+    case 'ellipse': js += `    ${obj.id}.style.width = '100px'; ${obj.id}.style.height = '76px'; ${obj.id}.style.borderRadius = '50%'; ${obj.id}.style.backgroundColor = '${fillColor}';\n`; break;
+    case 'text': js += `    ${obj.id}.textContent = '${(obj.textContent || 'Text').replace(/'/g, "\\'")}';\n    ${obj.id}.style.fontSize = '24px'; ${obj.id}.style.color = '${fillColor}'; ${obj.id}.style.whiteSpace = 'nowrap';\n`; break;
   }
 
   if (ow > 0) {
-    if (obj.type === 'text') {
-      js += `    ${obj.id}.style.webkitTextStroke = '${ow}px ${oc}';\n`;
-      js += `    ${obj.id}.style.paintOrder = 'stroke fill';\n`;
-    } else {
-      js += `    ${obj.id}.style.outline = '${ow}px solid ${oc}';\n`;
-    }
+    if (obj.type === 'text') { js += `    ${obj.id}.style.webkitTextStroke = '${ow}px ${oc}'; ${obj.id}.style.paintOrder = 'stroke fill';\n`; }
+    else { js += `    ${obj.id}.style.outline = '${ow}px solid ${oc}';\n`; }
   }
 
   js += `    container.appendChild(${obj.id});\n`;
-  js += `    gsap.set(${obj.id}, {\n`;
-  js += `        scaleX: ${firstKf.properties.scaleX.toFixed(2)},\n`;
-  js += `        scaleY: ${firstKf.properties.scaleY.toFixed(2)},\n`;
-  js += `        rotation: ${firstKf.properties.rotation.toFixed(2)},\n`;
-  js += `        opacity: ${firstKf.properties.opacity.toFixed(2)}\n`;
-  js += `    });\n\n`;
+  js += `    gsap.set(${obj.id}, { scaleX: ${firstKf.properties.scaleX.toFixed(2)}, scaleY: ${firstKf.properties.scaleY.toFixed(2)}, rotation: ${firstKf.properties.rotation.toFixed(2)}, opacity: ${firstKf.properties.opacity.toFixed(2)} });\n\n`;
   return js;
 };
 
-/**
- * Create a freehand path with wrapper div + SVG.
- */
 const generatePathCreation = (obj, firstKf, fabricCanvas) => {
   const pathString = fabricPathToSVGPath(obj.pathData);
   const fo = fabricCanvas?.getObjects().find(o => o.id === obj.id);
   const poX = fo?.pathOffset?.x || firstKf.properties.pathOffsetX || 0;
   const poY = fo?.pathOffset?.y || firstKf.properties.pathOffsetY || 0;
-  const w = fo?.width || obj.width || 0;
-  const h = fo?.height || obj.height || 0;
-  const ax = obj.anchorX ?? 0.5;
-  const ay = obj.anchorY ?? 0.5;
-  const tx = poX + (ax - 0.5) * w;
-  const ty = poY + (ay - 0.5) * h;
+  const w = fo?.width || obj.width || 0, h = fo?.height || obj.height || 0;
+  const ax = obj.anchorX ?? 0.5, ay = obj.anchorY ?? 0.5;
+  const tx = poX + (ax - 0.5) * w, ty = poY + (ay - 0.5) * h;
   const z = firstKf.properties.zIndex ?? 0;
   const wid = obj.id;
 
   let js = `    // Create ${obj.name} (SVG Path)\n`;
   js += `    const ${wid} = document.createElement('div');\n`;
-  js += `    ${wid}.id = '${wid}';\n`;
-  js += `    ${wid}.style.position = 'absolute';\n`;
-  js += `    ${wid}.style.left = '${firstKf.properties.x.toFixed(2)}px';\n`;
-  js += `    ${wid}.style.top = '${firstKf.properties.y.toFixed(2)}px';\n`;
-  js += `    ${wid}.style.width = '0px';\n`;
-  js += `    ${wid}.style.height = '0px';\n`;
-  js += `    ${wid}.style.overflow = 'visible';\n`;
-  js += `    ${wid}.style.transformOrigin = '0px 0px';\n`;
-  js += `    ${wid}.style.zIndex = '${z}';\n\n`;
+  js += `    ${wid}.id = '${wid}'; ${wid}.style.position = 'absolute';\n`;
+  js += `    ${wid}.style.left = '${firstKf.properties.x.toFixed(2)}px'; ${wid}.style.top = '${firstKf.properties.y.toFixed(2)}px';\n`;
+  js += `    ${wid}.style.width = '0px'; ${wid}.style.height = '0px'; ${wid}.style.overflow = 'visible';\n`;
+  js += `    ${wid}.style.transformOrigin = '0px 0px'; ${wid}.style.zIndex = '${z}';\n\n`;
 
-  // Paint bucket fills
   if (obj.fills?.length > 0) {
     obj.fills.forEach((fill, idx) => {
       const al = fill.relLeft - (ax - 0.5) * w;
       const at = fill.relTop - (ay - 0.5) * h;
       js += `    var fi${idx} = document.createElement('img');\n`;
-      js += `    fi${idx}.src = '${fill.dataURL}';\n`;
-      js += `    fi${idx}.style.position = 'absolute';\n`;
-      js += `    fi${idx}.style.left = '${al.toFixed(2)}px';\n`;
-      js += `    fi${idx}.style.top = '${at.toFixed(2)}px';\n`;
-      js += `    fi${idx}.style.width = '${fill.width}px';\n`;
-      js += `    fi${idx}.style.height = '${fill.height}px';\n`;
-      js += `    fi${idx}.style.pointerEvents = 'none';\n`;
-      js += `    fi${idx}.style.imageRendering = 'pixelated';\n`;
+      js += `    fi${idx}.src = '${fill.dataURL}'; fi${idx}.style.position = 'absolute';\n`;
+      js += `    fi${idx}.style.left = '${al.toFixed(2)}px'; fi${idx}.style.top = '${at.toFixed(2)}px';\n`;
+      js += `    fi${idx}.style.width = '${fill.width}px'; fi${idx}.style.height = '${fill.height}px';\n`;
+      js += `    fi${idx}.style.pointerEvents = 'none'; fi${idx}.style.imageRendering = 'pixelated';\n`;
       js += `    ${wid}.appendChild(fi${idx});\n\n`;
     });
   }
 
   js += `    var svg_${wid} = document.createElementNS('http://www.w3.org/2000/svg', 'svg');\n`;
-  js += `    svg_${wid}.style.position = 'absolute';\n`;
-  js += `    svg_${wid}.style.overflow = 'visible';\n`;
-  js += `    svg_${wid}.style.pointerEvents = 'none';\n`;
-  js += `    svg_${wid}.setAttribute('width', '1');\n`;
-  js += `    svg_${wid}.setAttribute('height', '1');\n\n`;
-
+  js += `    svg_${wid}.style.position = 'absolute'; svg_${wid}.style.overflow = 'visible'; svg_${wid}.style.pointerEvents = 'none';\n`;
+  js += `    svg_${wid}.setAttribute('width', '1'); svg_${wid}.setAttribute('height', '1');\n\n`;
   js += `    var g_${wid} = document.createElementNS('http://www.w3.org/2000/svg', 'g');\n`;
   js += `    g_${wid}.setAttribute('transform', 'translate(${(-tx).toFixed(2)}, ${(-ty).toFixed(2)})');\n\n`;
-
   js += `    var p_${wid} = document.createElementNS('http://www.w3.org/2000/svg', 'path');\n`;
   js += `    p_${wid}.setAttribute('d', '${pathString}');\n`;
-  js += `    p_${wid}.setAttribute('stroke', '${obj.strokeColor || '#000'}');\n`;
-  js += `    p_${wid}.setAttribute('stroke-width', '${obj.strokeWidth || 3}');\n`;
-  js += `    p_${wid}.setAttribute('fill', 'none');\n`;
-  js += `    p_${wid}.setAttribute('stroke-linecap', 'round');\n`;
-  js += `    p_${wid}.setAttribute('stroke-linejoin', 'round');\n\n`;
-
-  js += `    g_${wid}.appendChild(p_${wid});\n`;
-  js += `    svg_${wid}.appendChild(g_${wid});\n`;
-  js += `    ${wid}.appendChild(svg_${wid});\n`;
+  js += `    p_${wid}.setAttribute('stroke', '${obj.strokeColor || '#000'}'); p_${wid}.setAttribute('stroke-width', '${obj.strokeWidth || 3}');\n`;
+  js += `    p_${wid}.setAttribute('fill', 'none'); p_${wid}.setAttribute('stroke-linecap', 'round'); p_${wid}.setAttribute('stroke-linejoin', 'round');\n\n`;
+  js += `    g_${wid}.appendChild(p_${wid}); svg_${wid}.appendChild(g_${wid}); ${wid}.appendChild(svg_${wid});\n`;
   js += `    container.appendChild(${wid});\n`;
-  js += `    gsap.set(${wid}, {\n`;
-  js += `        scaleX: ${firstKf.properties.scaleX.toFixed(2)},\n`;
-  js += `        scaleY: ${firstKf.properties.scaleY.toFixed(2)},\n`;
-  js += `        rotation: ${firstKf.properties.rotation.toFixed(2)},\n`;
-  js += `        opacity: ${firstKf.properties.opacity.toFixed(2)}\n`;
-  js += `    });\n\n`;
+  js += `    gsap.set(${wid}, { scaleX: ${firstKf.properties.scaleX.toFixed(2)}, scaleY: ${firstKf.properties.scaleY.toFixed(2)}, rotation: ${firstKf.properties.rotation.toFixed(2)}, opacity: ${firstKf.properties.opacity.toFixed(2)} });\n\n`;
   return js;
 };
 
-/**
- * Create a group with child elements.
- */
 const generateGroupCreation = (obj, firstKf, canvasObjects, fabricCanvas) => {
   const z = firstKf.properties.zIndex ?? 0;
   let js = `    // Create ${obj.name} (Group)\n`;
   js += `    const ${obj.id} = document.createElement('div');\n`;
-  js += `    ${obj.id}.id = '${obj.id}';\n`;
-  js += `    ${obj.id}.style.position = 'absolute';\n`;
-  js += `    ${obj.id}.style.left = '${firstKf.properties.x.toFixed(2)}px';\n`;
-  js += `    ${obj.id}.style.top = '${firstKf.properties.y.toFixed(2)}px';\n`;
-  js += `    ${obj.id}.style.width = '0px';\n`;
-  js += `    ${obj.id}.style.height = '0px';\n`;
-  js += `    ${obj.id}.style.overflow = 'visible';\n`;
-  js += `    ${obj.id}.style.transformOrigin = '0px 0px';\n`;
-  js += `    ${obj.id}.style.zIndex = '${z}';\n`;
+  js += `    ${obj.id}.id = '${obj.id}'; ${obj.id}.style.position = 'absolute';\n`;
+  js += `    ${obj.id}.style.left = '${firstKf.properties.x.toFixed(2)}px'; ${obj.id}.style.top = '${firstKf.properties.y.toFixed(2)}px';\n`;
+  js += `    ${obj.id}.style.width = '0px'; ${obj.id}.style.height = '0px'; ${obj.id}.style.overflow = 'visible';\n`;
+  js += `    ${obj.id}.style.transformOrigin = '0px 0px'; ${obj.id}.style.zIndex = '${z}';\n`;
   js += `    container.appendChild(${obj.id});\n`;
-  js += `    gsap.set(${obj.id}, {\n`;
-  js += `        scaleX: ${firstKf.properties.scaleX.toFixed(2)},\n`;
-  js += `        scaleY: ${firstKf.properties.scaleY.toFixed(2)},\n`;
-  js += `        rotation: ${firstKf.properties.rotation.toFixed(2)},\n`;
-  js += `        opacity: ${firstKf.properties.opacity.toFixed(2)}\n`;
-  js += `    });\n\n`;
+  js += `    gsap.set(${obj.id}, { scaleX: ${firstKf.properties.scaleX.toFixed(2)}, scaleY: ${firstKf.properties.scaleY.toFixed(2)}, rotation: ${firstKf.properties.rotation.toFixed(2)}, opacity: ${firstKf.properties.opacity.toFixed(2)} });\n\n`;
 
-  // Generate child elements
   if (obj.children && fabricCanvas) {
     const fg = fabricCanvas.getObjects().find(o => o.id === obj.id);
     if (fg?._objects) {
@@ -815,79 +658,47 @@ const generateGroupCreation = (obj, firstKf, canvasObjects, fabricCanvas) => {
   return js;
 };
 
-/**
- * Generate a single child element inside a group.
- */
 const generateGroupChildCreation = (fc, childObj, parentId) => {
-  const rl = fc.left || 0;
-  const rt = fc.top || 0;
-  const sx = fc.scaleX || 1;
-  const sy = fc.scaleY || 1;
-  const an = fc.angle || 0;
+  const rl = fc.left || 0, rt = fc.top || 0;
+  const sx = fc.scaleX || 1, sy = fc.scaleY || 1, an = fc.angle || 0;
   let js = '';
 
   if (fc.type === 'path') {
     const ps = fabricPathToSVGPath(fc.path);
-    const poX = fc.pathOffset?.x || 0;
-    const poY = fc.pathOffset?.y || 0;
+    const poX = fc.pathOffset?.x || 0, poY = fc.pathOffset?.y || 0;
     js += `    (function() {\n`;
     js += `        var s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');\n`;
-    js += `        s.style.position = 'absolute';\n`;
-    js += `        s.style.overflow = 'visible';\n`;
-    js += `        s.style.pointerEvents = 'none';\n`;
-    js += `        s.setAttribute('width', '1');\n`;
-    js += `        s.setAttribute('height', '1');\n`;
+    js += `        s.style.position = 'absolute'; s.style.overflow = 'visible'; s.style.pointerEvents = 'none';\n`;
+    js += `        s.setAttribute('width', '1'); s.setAttribute('height', '1');\n`;
     js += `        var g = document.createElementNS('http://www.w3.org/2000/svg', 'g');\n`;
     js += `        g.setAttribute('transform', 'translate(${(rl - poX * sx).toFixed(2)}, ${(rt - poY * sy).toFixed(2)}) scale(${sx}, ${sy})');\n`;
     js += `        var p = document.createElementNS('http://www.w3.org/2000/svg', 'path');\n`;
-    js += `        p.setAttribute('d', '${ps}');\n`;
-    js += `        p.setAttribute('stroke', '${fc.stroke || '#000'}');\n`;
-    js += `        p.setAttribute('stroke-width', '${fc.strokeWidth || 3}');\n`;
-    js += `        p.setAttribute('fill', 'none');\n`;
-    js += `        p.setAttribute('stroke-linecap', 'round');\n`;
-    js += `        p.setAttribute('stroke-linejoin', 'round');\n`;
-    js += `        g.appendChild(p);\n`;
-    js += `        s.appendChild(g);\n`;
-    js += `        ${parentId}.appendChild(s);\n`;
+    js += `        p.setAttribute('d', '${ps}'); p.setAttribute('stroke', '${fc.stroke || '#000'}');\n`;
+    js += `        p.setAttribute('stroke-width', '${fc.strokeWidth || 3}'); p.setAttribute('fill', 'none');\n`;
+    js += `        p.setAttribute('stroke-linecap', 'round'); p.setAttribute('stroke-linejoin', 'round');\n`;
+    js += `        g.appendChild(p); s.appendChild(g); ${parentId}.appendChild(s);\n`;
     js += `    })();\n\n`;
   } else {
     const fill = childObj.fill || fc.fill;
-    let cw = 100;
-    let ch = 100;
+    let cw = 100, ch = 100;
 
     js += `    const ${fc.id} = document.createElement('div');\n`;
-    js += `    ${fc.id}.id = '${fc.id}';\n`;
-    js += `    ${fc.id}.style.position = 'absolute';\n`;
-    js += `    ${fc.id}.style.transformOrigin = 'center center';\n`;
+    js += `    ${fc.id}.id = '${fc.id}'; ${fc.id}.style.position = 'absolute'; ${fc.id}.style.transformOrigin = 'center center';\n`;
 
     if (fc.type === 'rect' || fc.type === 'rectangle') {
-      cw = (fc.width || 100) * sx;
-      ch = (fc.height || 100) * sy;
-      js += `    ${fc.id}.style.width = '${cw.toFixed(2)}px';\n`;
-      js += `    ${fc.id}.style.height = '${ch.toFixed(2)}px';\n`;
-      js += `    ${fc.id}.style.backgroundColor = '${fill || '#3b82f6'}';\n`;
+      cw = (fc.width || 100) * sx; ch = (fc.height || 100) * sy;
+      js += `    ${fc.id}.style.width = '${cw.toFixed(2)}px'; ${fc.id}.style.height = '${ch.toFixed(2)}px'; ${fc.id}.style.backgroundColor = '${fill || '#3b82f6'}';\n`;
     } else if (fc.type === 'circle') {
-      const r = fc.radius || 50;
-      cw = r * 2 * sx;
-      ch = r * 2 * sy;
-      js += `    ${fc.id}.style.width = '${cw.toFixed(2)}px';\n`;
-      js += `    ${fc.id}.style.height = '${ch.toFixed(2)}px';\n`;
-      js += `    ${fc.id}.style.borderRadius = '50%';\n`;
-      js += `    ${fc.id}.style.backgroundColor = '${fill || '#ef4444'}';\n`;
+      const r = fc.radius || 50; cw = r * 2 * sx; ch = r * 2 * sy;
+      js += `    ${fc.id}.style.width = '${cw.toFixed(2)}px'; ${fc.id}.style.height = '${ch.toFixed(2)}px'; ${fc.id}.style.borderRadius = '50%'; ${fc.id}.style.backgroundColor = '${fill || '#ef4444'}';\n`;
     } else if (fc.type === 'text') {
-      cw = (fc.width || 50) * sx;
-      ch = (fc.height || 24) * sy;
+      cw = (fc.width || 50) * sx; ch = (fc.height || 24) * sy;
       js += `    ${fc.id}.textContent = '${(fc.text || 'Text').replace(/'/g, "\\'")}';\n`;
-      js += `    ${fc.id}.style.fontSize = '${((fc.fontSize || 24) * sy).toFixed(2)}px';\n`;
-      js += `    ${fc.id}.style.color = '${fill || '#000'}';\n`;
-      js += `    ${fc.id}.style.whiteSpace = 'nowrap';\n`;
+      js += `    ${fc.id}.style.fontSize = '${((fc.fontSize || 24) * sy).toFixed(2)}px'; ${fc.id}.style.color = '${fill || '#000'}'; ${fc.id}.style.whiteSpace = 'nowrap';\n`;
     }
 
-    js += `    ${fc.id}.style.left = '${(rl - cw / 2).toFixed(2)}px';\n`;
-    js += `    ${fc.id}.style.top = '${(rt - ch / 2).toFixed(2)}px';\n`;
-    if (an) {
-      js += `    ${fc.id}.style.transform = 'rotate(${an}deg)';\n`;
-    }
+    js += `    ${fc.id}.style.left = '${(rl - cw / 2).toFixed(2)}px'; ${fc.id}.style.top = '${(rt - ch / 2).toFixed(2)}px';\n`;
+    if (an) js += `    ${fc.id}.style.transform = 'rotate(${an}deg)';\n`;
     js += `    ${parentId}.appendChild(${fc.id});\n\n`;
   }
 
@@ -898,33 +709,17 @@ const generateGroupChildCreation = (fc, childObj, parentId) => {
 // Animation functions
 // ===================================================================
 
-/**
- * Standard animation — for shapes positioned with (left - anchor * size).
- * Used by: CSS shapes, SVG shapes, images.
- */
 const generateStandardAnimation = (obj, objKfs, allNormalizedKfs, ew, eh) => {
-  const ax = obj.anchorX ?? 0.5;
-  const ay = obj.anchorY ?? 0.5;
+  const ax = obj.anchorX ?? 0.5, ay = obj.anchorY ?? 0.5;
   let js = '';
 
   for (let i = 1; i < objKfs.length; i++) {
-    const prev = objKfs[i - 1];
-    const curr = objKfs[i];
+    const prev = objKfs[i - 1], curr = objKfs[i];
     const dur = (curr.time - prev.time).toFixed(2);
     const ease = mapEasingToGSAP(curr.easing || 'linear');
     const gs = findGlobalZSwapForSegment(allNormalizedKfs, prev.time, curr.time);
 
-    js += `    tl.to('#${obj.id}', {\n`;
-    js += `        duration: ${dur},\n`;
-    js += `        left: '${(curr.properties.x - ax * ew).toFixed(2)}px',\n`;
-    js += `        top: '${(curr.properties.y - ay * eh).toFixed(2)}px',\n`;
-    js += `        scaleX: ${curr.properties.scaleX.toFixed(2)},\n`;
-    js += `        scaleY: ${curr.properties.scaleY.toFixed(2)},\n`;
-    js += `        rotation: ${curr.properties.rotation.toFixed(2)},\n`;
-    js += `        opacity: ${curr.properties.opacity.toFixed(2)},\n`;
-    js += `        ease: '${ease}'\n`;
-    js += `    }, ${prev.time.toFixed(2)});\n`;
-
+    js += `    tl.to('#${obj.id}', { duration: ${dur}, left: '${(curr.properties.x - ax * ew).toFixed(2)}px', top: '${(curr.properties.y - ay * eh).toFixed(2)}px', scaleX: ${curr.properties.scaleX.toFixed(2)}, scaleY: ${curr.properties.scaleY.toFixed(2)}, rotation: ${curr.properties.rotation.toFixed(2)}, opacity: ${curr.properties.opacity.toFixed(2)}, ease: '${ease}' }, ${prev.time.toFixed(2)});\n`;
     js += generateZSwapCode(`#${obj.id}`, prev, curr, gs);
     js += generateFillAnimCode(obj.id, obj.type, prev, curr);
   }
@@ -932,64 +727,34 @@ const generateStandardAnimation = (obj, objKfs, allNormalizedKfs, ew, eh) => {
   return js + '\n';
 };
 
-/**
- * Path-style animation — for elements positioned at direct (x, y) with wrapper.
- * Used by: freehand paths, deformed shapes, groups.
- * Also handles path morphing for deformed shapes.
- */
 const generatePathStyleAnimation = (obj, objKfs, allNormalizedKfs) => {
   let js = '';
 
   for (let i = 1; i < objKfs.length; i++) {
-    const prev = objKfs[i - 1];
-    const curr = objKfs[i];
+    const prev = objKfs[i - 1], curr = objKfs[i];
     const dur = (curr.time - prev.time).toFixed(2);
     const ease = mapEasingToGSAP(curr.easing || 'linear');
     const gs = findGlobalZSwapForSegment(allNormalizedKfs, prev.time, curr.time);
 
-    js += `    tl.to('#${obj.id}', {\n`;
-    js += `        duration: ${dur},\n`;
-    js += `        left: '${curr.properties.x.toFixed(2)}px',\n`;
-    js += `        top: '${curr.properties.y.toFixed(2)}px',\n`;
-    js += `        scaleX: ${curr.properties.scaleX.toFixed(2)},\n`;
-    js += `        scaleY: ${curr.properties.scaleY.toFixed(2)},\n`;
-    js += `        rotation: ${curr.properties.rotation.toFixed(2)},\n`;
-    js += `        opacity: ${curr.properties.opacity.toFixed(2)},\n`;
-    js += `        ease: '${ease}'\n`;
-    js += `    }, ${prev.time.toFixed(2)});\n`;
-
+    js += `    tl.to('#${obj.id}', { duration: ${dur}, left: '${curr.properties.x.toFixed(2)}px', top: '${curr.properties.y.toFixed(2)}px', scaleX: ${curr.properties.scaleX.toFixed(2)}, scaleY: ${curr.properties.scaleY.toFixed(2)}, rotation: ${curr.properties.rotation.toFixed(2)}, opacity: ${curr.properties.opacity.toFixed(2)}, ease: '${ease}' }, ${prev.time.toFixed(2)});\n`;
     js += generateZSwapCode(`#${obj.id}`, prev, curr, gs);
 
-    // Fill color animation for deformed shapes
     if (obj.deformedPath) {
-      const prevFill = prev.properties.fill;
-      const currFill = curr.properties.fill;
+      const prevFill = prev.properties.fill, currFill = curr.properties.fill;
       if (prevFill && currFill && prevFill !== currFill) {
-        js += `    tl.to('#${obj.id} path', {\n`;
-        js += `        duration: ${dur},\n`;
-        js += `        attr: { fill: '${currFill}' },\n`;
-        js += `        ease: '${ease}'\n`;
-        js += `    }, ${prev.time.toFixed(2)});\n`;
+        js += `    tl.to('#${obj.id} path', { duration: ${dur}, attr: { fill: '${currFill}' }, ease: '${ease}' }, ${prev.time.toFixed(2)});\n`;
       }
     }
 
-    // Path morphing animation
-    const prevPath = prev.properties?.deformedPath;
-    const currPath = curr.properties?.deformedPath;
+    const prevPath = prev.properties?.deformedPath, currPath = curr.properties?.deformedPath;
     if (prevPath && currPath && prevPath !== currPath) {
-      js += `    // Path morphing: ${obj.name}\n`;
       js += `    (function() {\n`;
       js += `        var pathEl = document.querySelector('#${obj.id} path');\n`;
       js += `        var startD = '${escapeJSString(prevPath)}';\n`;
       js += `        var endD = '${escapeJSString(currPath)}';\n`;
       js += `        var progress = { t: 0 };\n`;
-      js += `        tl.to(progress, {\n`;
-      js += `            t: 1,\n`;
-      js += `            duration: ${dur},\n`;
-      js += `            ease: '${ease}',\n`;
-      js += `            onUpdate: function() {\n`;
-      js += `                pathEl.setAttribute('d', interpolatePaths(startD, endD, progress.t));\n`;
-      js += `            }\n`;
+      js += `        tl.to(progress, { t: 1, duration: ${dur}, ease: '${ease}',\n`;
+      js += `            onUpdate: function() { pathEl.setAttribute('d', interpolatePaths(startD, endD, progress.t)); }\n`;
       js += `        }, ${prev.time.toFixed(2)});\n`;
       js += `    })();\n`;
     }
@@ -1006,12 +771,9 @@ export const downloadFile = (filename, content) => {
   const blob = new Blob([content], { type: 'text/plain' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
 };
 
 const downloadAudioFile = (audioFile) => {
@@ -1020,12 +782,9 @@ const downloadAudioFile = (audioFile) => {
   const blob = arrayBufferToBlob(audioFile.arrayBuffer, audioFile.mimeType || 'audio/mpeg');
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url;
-  a.download = `audio.${ext}`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  a.href = url; a.download = `audio.${ext}`;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
 };
 
 export const downloadAllFiles = (html, css, javascript, audioFile = null) => {
@@ -1038,11 +797,6 @@ export const downloadAllFiles = (html, css, javascript, audioFile = null) => {
 };
 
 export const copyToClipboard = async (text) => {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch (err) {
-    console.error('Failed to copy:', err);
-    return false;
-  }
+  try { await navigator.clipboard.writeText(text); return true; }
+  catch (err) { console.error('Failed to copy:', err); return false; }
 };

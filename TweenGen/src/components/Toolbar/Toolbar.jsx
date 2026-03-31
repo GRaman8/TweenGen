@@ -26,6 +26,7 @@ import { ungroupFabricGroup, findFabricObjectById } from '../../utils/fabricHelp
 import { generateWaveformPeaks } from '../../utils/audioUtils';
 import { getShapeDef } from '../../utils/shapeDefinitions';
 import ShapePicker from './ShapePicker';
+import TextInputDialog from './TextInputDialog';
 import * as fabric from 'fabric';
 
 /**
@@ -182,6 +183,9 @@ const Toolbar = () => {
   const fileInputRef = useRef(null);
   const audioInputRef = useRef(null);
 
+  // Text input dialog state
+  const [textDialogOpen, setTextDialogOpen] = useState(false);
+
   const canGroup = fabricCanvas?.getActiveObjects().length > 1;
   
   const canUngroup = React.useMemo(() => {
@@ -214,17 +218,18 @@ const Toolbar = () => {
     setKeyframes(prev => ({ ...prev, [id]: [] }));
   };
 
-  // ===== ADD TEXT =====
-  const addText = () => {
+  // ===== ADD TEXT (via dialog) =====
+  const handleAddTextSubmit = ({ text, fontSize, color }) => {
     if (!fabricCanvas) return;
     const id = `element_${Date.now()}`;
     const count = canvasObjects.filter(obj => obj.type === 'text').length + 1;
     const name = `text_${count}`;
-    const fabricObject = new fabric.Text('Text', {
-      id, left: 100, top: 100, originX: 'center', originY: 'center', fontSize: 24, fill: '#000000',
+    const fabricObject = new fabric.Text(text, {
+      id, left: 350, top: 250, originX: 'center', originY: 'center',
+      fontSize: fontSize, fill: color,
     });
     fabricCanvas.add(fabricObject); fabricCanvas.setActiveObject(fabricObject); fabricCanvas.renderAll();
-    setCanvasObjects(prev => [...prev, { id, type: 'text', name, textContent: 'Text', fill: '#000000' }]);
+    setCanvasObjects(prev => [...prev, { id, type: 'text', name, textContent: text, fill: color }]);
     setKeyframes(prev => ({ ...prev, [id]: [] }));
   };
 
@@ -340,7 +345,6 @@ const Toolbar = () => {
       setSelectedObject(newId);
 
     } else if (objData.type === 'path') {
-      // ===== PATH / FREEHAND DRAWING DUPLICATION =====
       const pathString = fabricPathToSVGPathString(fo.path);
       if (!pathString) return;
       const newPath = new fabric.Path(pathString, {
@@ -354,7 +358,6 @@ const Toolbar = () => {
       });
       fabricCanvas.add(newPath);
 
-      // Duplicate paint bucket fills
       const newFills = [];
       if (objData.fills && objData.fills.length > 0) {
         objData.fills.forEach((fillData, idx) => {
@@ -388,12 +391,9 @@ const Toolbar = () => {
       setSelectedObject(newId);
 
     } else if (objData.type === 'group') {
-      // ===== GROUP DUPLICATION =====
       duplicateGroup(objData, fo, newId, offset).catch(err => console.error('Group duplication failed:', err));
 
     } else if (objData.convertedToPath && objData.deformedPath) {
-      // ===== DEFORMED SHAPE DUPLICATION =====
-      // After deformation, the fabric object is a fabric.Path — duplicate it as such
       const pathString = fabricPathToSVGPathString(fo.path) || objData.deformedPath;
       const fillColor = fo.fill || objData.fill || '#000000';
       const newPath = new fabric.Path(pathString, {
@@ -416,7 +416,6 @@ const Toolbar = () => {
         name: `${shapeDef?.label || objData.type}_${count}`,
         fill: fillColor,
         outlineWidth: srcOutlineWidth, outlineColor: srcOutlineColor,
-        // Copy deformation data
         deformedPath: objData.deformedPath,
         convertedToPath: true,
         deformedPathOffsetX: newPath.pathOffset?.x || objData.deformedPathOffsetX,
@@ -430,7 +429,6 @@ const Toolbar = () => {
       setSelectedObject(newId);
 
     } else {
-      // ===== SOLID SHAPES =====
       const shapeDef = getShapeDef(objData.type);
       if (!shapeDef) return;
       const fillColor = fo.fill || objData.fill || shapeDef.defaultFill;
@@ -455,21 +453,16 @@ const Toolbar = () => {
   };
 
   // ===== GROUP DUPLICATION =====
-  // Async: pre-loads all image children before assembling the group,
-  // so fabric.Image objects have their <img> elements ready.
   const duplicateGroup = async (groupObjData, fabricGroup, newGroupId, offset) => {
     if (!fabricGroup._objects || fabricGroup._objects.length === 0) return;
 
     const newChildObjDataEntries = [];
     const fillsToCreate = [];
 
-    // Build an array of Promises — one per child.
-    // Non-image children resolve synchronously; image children resolve once loaded.
     const childPromises = fabricGroup._objects.map((fc, idx) => {
       const childObjData = canvasObjects.find(o => o.id === fc.id);
       const newChildId = `element_${Date.now()}_${idx}`;
 
-      // ---- IMAGE CHILD: load the <img> element first ----
       if (fc.type === 'image') {
         return new Promise((resolve) => {
           const dataURL = childObjData?.imageDataURL || fc.getSrc?.() || '';
@@ -496,13 +489,11 @@ const Toolbar = () => {
         });
       }
 
-      // ---- NON-IMAGE CHILD: clone synchronously ----
       const clonedFabric = cloneFabricChild(fc, newChildId);
       if (!clonedFabric) return Promise.resolve(null);
 
       const childData = buildChildObjData(childObjData, newChildId);
       if (childData) {
-        // Clone paint bucket fills for path children
         if (childObjData?.type === 'path' && childObjData.fills && childObjData.fills.length > 0) {
           const clonedFills = [];
           childObjData.fills.forEach((fillData, fIdx) => {
@@ -528,7 +519,6 @@ const Toolbar = () => {
       return Promise.resolve({ fabricObj: clonedFabric, childId: newChildId });
     });
 
-    // Wait for ALL children (including images) to be ready
     const results = await Promise.all(childPromises);
     const validResults = results.filter(Boolean);
     if (validResults.length === 0) return;
@@ -536,7 +526,6 @@ const Toolbar = () => {
     const newChildFabricObjs = validResults.map(r => r.fabricObj);
     const newChildIds = validResults.map(r => r.childId);
 
-    // Create the new fabric.Group with all children fully loaded
     const newGroup = new fabric.Group(newChildFabricObjs, {
       id: newGroupId,
       left: (fabricGroup.left || 350) + offset,
@@ -550,7 +539,6 @@ const Toolbar = () => {
     fabricCanvas.setActiveObject(newGroup);
     fabricCanvas.renderAll();
 
-    // Create fill images for path children
     if (fillsToCreate.length > 0) {
       fillsToCreate.forEach(fillInfo => {
         const fillImgEl = new Image();
@@ -570,7 +558,6 @@ const Toolbar = () => {
       });
     }
 
-    // Update canvasObjects
     const groupCount = canvasObjects.filter(obj => obj.type === 'group').length + 1;
     setCanvasObjects(prev => [
       ...prev,
@@ -581,7 +568,6 @@ const Toolbar = () => {
     setSelectedObject(newGroupId);
   };
 
-  // All types can be duplicated
   const canDuplicate = React.useMemo(() => {
     if (!selectedObject) return false;
     return !!canvasObjects.find(obj => obj.id === selectedObject);
@@ -687,8 +673,16 @@ const Toolbar = () => {
       <ShapePicker anchorEl={shapePickerAnchor} open={Boolean(shapePickerAnchor)} onClose={() => setShapePickerAnchor(null)} onSelectShape={addShape} />
 
       <Tooltip title="Add Text" placement="right">
-        <IconButton onClick={addText} color="primary"><TextIcon /></IconButton>
+        <IconButton onClick={() => setTextDialogOpen(true)} color="primary"><TextIcon /></IconButton>
       </Tooltip>
+
+      {/* Text Input Dialog */}
+      <TextInputDialog
+        open={textDialogOpen}
+        onClose={() => setTextDialogOpen(false)}
+        onSubmit={handleAddTextSubmit}
+        mode="add"
+      />
 
       <Tooltip title="Upload Image" placement="right">
         <IconButton onClick={() => fileInputRef.current?.click()} color="primary"><ImageIcon /></IconButton>

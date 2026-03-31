@@ -8,6 +8,7 @@ import {
   useHasActiveSelection, useDrawingMode, useCurrentDrawingPath,
   useDrawingToolSettings, useCanvasBgColor, useSelectedKeyframe,
   useFillToolActive, useFillToolColor, useTrackOrder, useHiddenTracks,
+  useCanvasBgImage,
 } from '../../store/hooks';
 
 import { 
@@ -24,6 +25,7 @@ import {
 
 import { performFloodFill } from '../../utils/floodFill';
 import AnchorPointOverlay from './AnchorPointOverlay';
+import TextInputDialog from '../Toolbar/TextInputDialog';
 
 export const CANVAS_WIDTH = 1400;
 export const CANVAS_HEIGHT = 800;
@@ -70,6 +72,7 @@ const Canvas = () => {
   const [, setCurrentDrawingPath] = useCurrentDrawingPath();
   const [drawingSettings] = useDrawingToolSettings();
   const [canvasBgColor] = useCanvasBgColor();
+  const [canvasBgImage] = useCanvasBgImage();
   const [selectedKeyframe] = useSelectedKeyframe();
   const [fillToolActive, setFillToolActive] = useFillToolActive();
   const [fillToolColor] = useFillToolColor();
@@ -85,6 +88,13 @@ const Canvas = () => {
   const committedStrokesRef = useRef([]);
   const committedStrokePathsRef = useRef([]);
   const [strokeCount, setStrokeCount] = useState(0);
+
+  // Text edit dialog state
+  const [textEditOpen, setTextEditOpen] = useState(false);
+  const [textEditTarget, setTextEditTarget] = useState(null);
+  const [textEditInitialText, setTextEditInitialText] = useState('');
+  const [textEditInitialFontSize, setTextEditInitialFontSize] = useState(24);
+  const [textEditInitialColor, setTextEditInitialColor] = useState('#000000');
 
   const canvasObjectsRef = useRef(canvasObjects);
   useEffect(() => { canvasObjectsRef.current = canvasObjects; }, [canvasObjects]);
@@ -108,6 +118,35 @@ const Canvas = () => {
     }
     fabricCanvas.renderAll();
   }, [fabricCanvas, hiddenTracks, selectedObject]);
+
+  // ==================== BACKGROUND IMAGE SYNC ====================
+  useEffect(() => {
+    if (!fabricCanvas) return;
+
+    if (canvasBgImage?.dataURL) {
+      const imgEl = new Image();
+      imgEl.onload = () => {
+        const fabricImg = new fabric.Image(imgEl, {
+          originX: 'left',
+          originY: 'top',
+        });
+        // Scale image to fill the canvas
+        fabricImg.scaleToWidth(CANVAS_WIDTH);
+        if (fabricImg.getScaledHeight() < CANVAS_HEIGHT) {
+          fabricImg.scaleToHeight(CANVAS_HEIGHT);
+        }
+        fabricCanvas.setBackgroundImage(fabricImg, () => {
+          fabricCanvas.renderAll();
+        });
+      };
+      imgEl.src = canvasBgImage.dataURL;
+    } else {
+      // Remove background image
+      fabricCanvas.setBackgroundImage(null, () => {
+        fabricCanvas.renderAll();
+      });
+    }
+  }, [fabricCanvas, canvasBgImage]);
 
   // ==================== FILL SYNC ====================
   const syncFillsForPath = (pathId) => {
@@ -262,21 +301,34 @@ const Canvas = () => {
       interactingObjectRef.current = null;
     });
     
+    // Double-click on text opens the TextInputDialog
     canvas.on('mouse:dblclick', (e) => {
       if (e.target && e.target.type === 'text') {
-        const newText = prompt('Enter new text:', e.target.text);
-        if (newText !== null && newText !== '') {
-          e.target.set('text', newText);
-          canvas.renderAll();
-          setCanvasObjects(prev => prev.map(obj =>
-            obj.id === e.target.id ? { ...obj, textContent: newText } : obj
-          ));
-        }
+        setTextEditTarget(e.target);
+        setTextEditInitialText(e.target.text || '');
+        setTextEditInitialFontSize(e.target.fontSize || 24);
+        setTextEditInitialColor(e.target.fill || '#000000');
+        setTextEditOpen(true);
       }
     });
 
     return () => { canvas.dispose(); };
   }, []);
+
+  // Handle text edit submit
+  const handleTextEditSubmit = ({ text, fontSize, color }) => {
+    if (!textEditTarget || !fabricCanvas) return;
+    textEditTarget.set('text', text);
+    textEditTarget.set('fontSize', fontSize);
+    textEditTarget.set('fill', color);
+    fabricCanvas.renderAll();
+    setCanvasObjects(prev => prev.map(obj =>
+      obj.id === textEditTarget.id
+        ? { ...obj, textContent: text, fill: color }
+        : obj
+    ));
+    setTextEditTarget(null);
+  };
 
   const updateProps = (fabricObject) => {
     const props = extractPropertiesFromFabricObject(fabricObject);
@@ -658,7 +710,6 @@ const Canvas = () => {
   useEffect(() => {
     if (!fabricCanvas || isInteracting) return;
 
-    // Respect hidden tracks
     fabricCanvas.forEachObject(obj => {
       if (obj._isFill) {
         obj.visible = !(obj._parentId && hiddenTracks[obj._parentId]);
@@ -684,11 +735,9 @@ const Canvas = () => {
         fabricCanvas.discardActiveObject();
       }
 
-      // Compute the global z-swap point ONCE for this frame
       const globalZSwap = findGlobalZSwapPoint(keyframes, currentTime);
 
       canvasObjects.forEach(obj => {
-        // Skip hidden objects during playback
         if (hiddenTracks[obj.id]) return;
 
         const objKfs = keyframes[obj.id] || [];
@@ -709,36 +758,20 @@ const Canvas = () => {
         );
 
         if (interpolated) {
-          // Apply position, scale, rotation, opacity, fill, zIndex
           applyPropertiesToFabricObject(fo, interpolated);
 
-          // ===== PATH MORPHING DURING EDITOR PLAYBACK =====
-          // When a deformed shape has different deformedPath values between
-          // keyframes, interpolateProperties returns the blended SVG path.
-          // We update the fabric.Path's internal path array to render the
-          // morphed shape on each frame.
-          //
-          // Example: triangle at keyframe 0s → cone at keyframe 5s
-          // At 2.5s, the interpolated path is halfway between triangle and cone.
           if (
             interpolated.deformedPath &&
             fo.type === 'path' &&
             obj.convertedToPath
           ) {
             try {
-              // Parse the interpolated SVG string into fabric's internal format
               const tempPath = new fabric.Path(interpolated.deformedPath);
-
-              // Swap the path data without changing position/scale/etc
               fo.set('path', tempPath.path);
-
-              // Recalculate bounding box and internal geometry
               if (typeof fo._setPositionDimensions === 'function') {
                 fo._setPositionDimensions({});
               }
-            } catch (e) {
-              // If path parsing fails on this frame, skip silently
-            }
+            } catch (e) {}
           }
 
           fo.setCoords();
@@ -777,7 +810,6 @@ const Canvas = () => {
       const tag = e.target.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target.isContentEditable) return;
 
-      // Group: Cmd/Ctrl+G
       if ((e.metaKey || e.ctrlKey) && e.key === 'g' && !e.shiftKey) {
         e.preventDefault();
         const activeObjects = fabricCanvas.getActiveObjects();
@@ -817,7 +849,6 @@ const Canvas = () => {
         return;
       }
 
-      // Ungroup: Cmd/Ctrl+Shift+G
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'G') {
         e.preventDefault();
         if (!selectedObject) return;
@@ -851,7 +882,6 @@ const Canvas = () => {
         return;
       }
 
-      // Delete
       if (e.key === 'Delete' || e.key === 'Backspace') {
         const activeObjects = fabricCanvas.getActiveObjects();
         if (activeObjects.length > 0) {
@@ -861,7 +891,6 @@ const Canvas = () => {
               const objData = canvasObjects.find(obj => obj.id === fo.id);
               fabricCanvas.remove(fo);
 
-              // Remove associated paint bucket fills
               if (objData?.fills?.length > 0) {
                 const fillIds = new Set(objData.fills.map(f => f.id));
                 fabricCanvas.getObjects()
@@ -945,6 +974,17 @@ const Canvas = () => {
         <canvas ref={canvasRef} />
         <AnchorPointOverlay />
       </Paper>
+
+      {/* Text Edit Dialog — opens on double-click of text objects */}
+      <TextInputDialog
+        open={textEditOpen}
+        onClose={() => { setTextEditOpen(false); setTextEditTarget(null); }}
+        onSubmit={handleTextEditSubmit}
+        initialText={textEditInitialText}
+        initialFontSize={textEditInitialFontSize}
+        initialColor={textEditInitialColor}
+        mode="edit"
+      />
     </Box>
   );
 };
