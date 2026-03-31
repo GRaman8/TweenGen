@@ -135,16 +135,15 @@ const Canvas = () => {
         if (fabricImg.getScaledHeight() < CANVAS_HEIGHT) {
           fabricImg.scaleToHeight(CANVAS_HEIGHT);
         }
-        fabricCanvas.setBackgroundImage(fabricImg, () => {
-          fabricCanvas.renderAll();
-        });
+        // Fabric.js v7: set backgroundImage as a direct property
+        fabricCanvas.backgroundImage = fabricImg;
+        fabricCanvas.renderAll();
       };
       imgEl.src = canvasBgImage.dataURL;
     } else {
       // Remove background image
-      fabricCanvas.setBackgroundImage(null, () => {
-        fabricCanvas.renderAll();
-      });
+      fabricCanvas.backgroundImage = null;
+      fabricCanvas.renderAll();
     }
   }, [fabricCanvas, canvasBgImage]);
 
