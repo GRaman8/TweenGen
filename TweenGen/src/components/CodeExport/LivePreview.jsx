@@ -284,10 +284,30 @@ const LivePreview = ({ isPreviewVisible = false }) => {
     g.appendChild(pathEl);svg.appendChild(g);parentEl.appendChild(svg);
   };
   const renderSolidChild = (fc,childObj,relLeft,relTop,scaleX,scaleY,angle,parentEl) => {
+    const fillColor=childObj.fill||fc.fill;
+    let cw=0,ch=0;
+
+    // Polygon-based SVG shapes (triangle, diamond, star, pentagon, hexagon, arrow, heart, cross)
+    if (fc.type==='polygon' && childObj.svgPath) {
+      cw=(fc.width||100)*scaleX; ch=(fc.height||100)*scaleY;
+      const wrapper=document.createElement('div'); wrapper.id=fc.id;
+      wrapper.style.position='absolute'; wrapper.style.transformOrigin='center center';
+      wrapper.style.width=cw+'px'; wrapper.style.height=ch+'px';
+      const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+      svg.setAttribute('viewBox','0 0 100 100'); svg.setAttribute('width','100%'); svg.setAttribute('height','100%'); svg.style.display='block';
+      const pathEl=document.createElementNS('http://www.w3.org/2000/svg','path');
+      pathEl.setAttribute('d',childObj.svgPath); pathEl.setAttribute('fill',fillColor||'#000');
+      svg.appendChild(pathEl); wrapper.appendChild(svg);
+      wrapper.style.left=(relLeft-cw/2)+'px'; wrapper.style.top=(relTop-ch/2)+'px';
+      if(angle) wrapper.style.transform=`rotate(${angle}deg)`;
+      parentEl.appendChild(wrapper);
+      return;
+    }
+
     const el=document.createElement('div');el.id=fc.id;el.style.position='absolute';el.style.transformOrigin='center center';
-    let cw=0,ch=0;const fillColor=childObj.fill||fc.fill;
     if(fc.type==='rect'||fc.type==='rectangle'){cw=(fc.width||100)*scaleX;ch=(fc.height||100)*scaleY;el.style.width=cw+'px';el.style.height=ch+'px';el.style.backgroundColor=fillColor||'#3b82f6';}
     else if(fc.type==='circle'){const r=fc.radius||50;cw=r*2*scaleX;ch=r*2*scaleY;el.style.width=cw+'px';el.style.height=ch+'px';el.style.borderRadius='50%';el.style.backgroundColor=fillColor||'#ef4444';}
+    else if(fc.type==='ellipse'){cw=(fc.rx||50)*2*scaleX;ch=(fc.ry||38)*2*scaleY;el.style.width=cw+'px';el.style.height=ch+'px';el.style.borderRadius='50%';el.style.backgroundColor=fillColor||'#a855f7';}
     else if(fc.type==='text'){el.textContent=fc.text||'Text';el.style.fontSize=((fc.fontSize||24)*scaleY)+'px';el.style.color=fillColor||'#000';el.style.whiteSpace='nowrap';cw=(fc.width||50)*scaleX;ch=(fc.height||24)*scaleY;}
     el.style.left=(relLeft-cw/2)+'px';el.style.top=(relTop-ch/2)+'px';if(angle)el.style.transform=`rotate(${angle}deg)`;parentEl.appendChild(el);
   };

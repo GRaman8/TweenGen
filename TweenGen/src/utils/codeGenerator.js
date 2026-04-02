@@ -678,6 +678,20 @@ const generateGroupChildCreation = (fc, childObj, parentId) => {
     js += `        p.setAttribute('stroke-linecap', 'round'); p.setAttribute('stroke-linejoin', 'round');\n`;
     js += `        g.appendChild(p); s.appendChild(g); ${parentId}.appendChild(s);\n`;
     js += `    })();\n\n`;
+  } else if (fc.type === 'polygon' && childObj.svgPath) {
+    // SVG-based polygon shapes (triangle, diamond, star, pentagon, hexagon, arrow, cross)
+    const fill = childObj.fill || fc.fill;
+    const cw = ((fc.width || 100) * sx).toFixed(2);
+    const ch = ((fc.height || 100) * sy).toFixed(2);
+    js += `    (function() {\n`;
+    js += `        var w = document.createElement('div');\n`;
+    js += `        w.id = '${fc.id}'; w.style.position = 'absolute'; w.style.transformOrigin = 'center center';\n`;
+    js += `        w.style.width = '${cw}px'; w.style.height = '${ch}px';\n`;
+    js += `        w.innerHTML = '<svg viewBox="0 0 100 100" width="100%" height="100%" style="display:block"><path d="${childObj.svgPath}" fill="${fill || '#000'}"/></svg>';\n`;
+    js += `        w.style.left = '${(rl - (fc.width || 100) * sx / 2).toFixed(2)}px'; w.style.top = '${(rt - (fc.height || 100) * sy / 2).toFixed(2)}px';\n`;
+    if (an) js += `        w.style.transform = 'rotate(${an}deg)';\n`;
+    js += `        ${parentId}.appendChild(w);\n`;
+    js += `    })();\n\n`;
   } else {
     const fill = childObj.fill || fc.fill;
     let cw = 100, ch = 100;
@@ -691,6 +705,9 @@ const generateGroupChildCreation = (fc, childObj, parentId) => {
     } else if (fc.type === 'circle') {
       const r = fc.radius || 50; cw = r * 2 * sx; ch = r * 2 * sy;
       js += `    ${fc.id}.style.width = '${cw.toFixed(2)}px'; ${fc.id}.style.height = '${ch.toFixed(2)}px'; ${fc.id}.style.borderRadius = '50%'; ${fc.id}.style.backgroundColor = '${fill || '#ef4444'}';\n`;
+    } else if (fc.type === 'ellipse') {
+      cw = (fc.rx || 50) * 2 * sx; ch = (fc.ry || 38) * 2 * sy;
+      js += `    ${fc.id}.style.width = '${cw.toFixed(2)}px'; ${fc.id}.style.height = '${ch.toFixed(2)}px'; ${fc.id}.style.borderRadius = '50%'; ${fc.id}.style.backgroundColor = '${fill || '#a855f7'}';\n`;
     } else if (fc.type === 'text') {
       cw = (fc.width || 50) * sx; ch = (fc.height || 24) * sy;
       js += `    ${fc.id}.textContent = '${(fc.text || 'Text').replace(/'/g, "\\'")}';\n`;
