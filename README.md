@@ -58,8 +58,8 @@ Think of it as a lightweight alternative to tools like Adobe Animate or After Ef
 | **Shape Outline** | MS Paint-style outline system for solid shapes. Choose from 5 thickness options (None, 1px, 3px, 5px, 8px) with visual line previews, plus a color picker for the outline. Renders as CSS `outline` for div shapes, SVG `stroke` for polygon shapes, and `-webkit-text-stroke` for text. |
 | **Vector Detail Editor** | Open any solid shape or traced image at 2×–6× zoom in a dedicated editor. Draw freehand strokes or place shapes (rect, circle, triangle, diamond, star, arrow, pentagon, hexagon) with fill/outline modes. Additions are converted to SVG markup and baked into the vector data on save. |
 | **Canvas Background Image** | Upload any image as the canvas backdrop. The image scales to cover the full 1400×800 canvas area. Applies to the editor, live preview, and exported code (embedded as CSS `background-image`). Replace or remove the background at any time from the Properties Panel. |
-| **Audio / BGM Support** | Upload MP3, WAV, or OGG audio files. A waveform visualization renders in the timeline section with volume, mute, and remove controls. Drag trim handles to select which portion of the audio plays during the animation. Audio syncs with the editor's play/pause/stop controls, the live preview, and the exported code. The original audio file is exported as a separate file with zero quality loss. |
-| **Audio Trim Region** | Draggable start/end handles on the waveform let you select exactly which slice of the audio matches your animation. A "Fit to Duration" button auto-sizes the region to match your animation length. The region can be slid along the full audio to pick the perfect segment. |
+| **Audio / BGM Support** | Upload MP3, WAV, OGG, AAC, M4A, or WebM audio files. A waveform visualization renders in the timeline section with volume, mute, and remove controls. Drag trim handles to select which portion of the audio plays during the animation. Toggle between **Sync view** (trimmed region stretched to match the timeline for precise editing) and **Full Audio view** (entire waveform with draggable trim handles). Audio syncs with the editor's play/pause/stop controls, the live preview, and the exported code. The original audio file is exported as a separate file with zero quality loss. |
+| **Audio Trim Region** | Draggable start/end handles on the waveform let you select exactly which slice of the audio matches your animation. A "Fit to Duration" button auto-sizes the region to match your animation length. The region can be slid along the full audio to pick the perfect segment. Switch to **Sync view** to see the trimmed region zoomed to fill the full timeline width — ideal for precise alignment. |
 | **Color Animation** | Animate fill color between keyframes. Change a shape's color at different points on the timeline and the color smoothly interpolates during playback. Works in the editor, live preview, and exported code for all solid shapes, SVG shapes, and text. |
 | **Duplicate Objects** | Duplicate any selected shape, text, or image with one click. Creates a copy with the same properties offset by 30px. For images, reuses the same source data. Preserves outlines, deformations, vector edits, and paint bucket fills. |
 | **Keyframe Timeline** | Place keyframes along a timeline scrubber. Each keyframe captures an object's full transform state including position, scale, rotation, opacity, fill color, z-index, and deformed path. |
@@ -382,7 +382,7 @@ Use the **left toolbar** to add objects to the canvas:
 - **Shape Picker** — click the shapes icon to open a flyout with 12 shape options. Each shows an SVG preview.
 - **Text** — opens a rich input dialog where you set text content, font size (8–120px), and color (20 swatches + custom hex picker) with a live preview before adding. Double-click any text object on the canvas to re-open the editor.
 - **Image Upload** — opens a file picker to upload any image. Images are auto-scaled and fully animatable.
-- **Audio Upload (speaker icon)** — opens a file picker for MP3, WAV, or OGG files. The audio appears as a waveform track at the bottom of the timeline.
+- **Audio Upload (speaker icon)** — opens a file picker for MP3, WAV, OGG, AAC, M4A, or WebM files. The audio appears as a waveform track at the bottom of the timeline.
 - **Drawing Tool (brush icon)** — enters freehand drawing mode. Draw multiple strokes, then press Enter to commit. Press Escape to cancel.
 - **Paint Bucket** — MS Paint-style flood fill. Click inside any enclosed region to fill it with color. Press Escape to exit.
 - **Duplicate (copy icon)** — creates a copy of the currently selected shape, text, or image, offset 30px from the original. Preserves outlines, deformations, and fills.
@@ -428,6 +428,7 @@ Upload an audio file using the **speaker icon** in the toolbar. The audio track 
 
 - **Waveform visualization** — amplitude bars with a blue-to-purple gradient, red playhead, and dimmed out-of-region areas
 - **Trim region handles** — drag the left/right handles to select the audio segment that maps to your animation. Drag the center to slide the region.
+- **Sync / Full view toggle** — switch between **Sync view** (trimmed region stretched to fill the timeline width for precise visual alignment) and **Full Audio view** (entire waveform with trim handles and region dragging)
 - **"Fit to Duration" button** — auto-sizes the region to match animation length
 - **Volume slider, mute toggle, and remove button**
 
@@ -456,7 +457,9 @@ Hide a track via the eye icon to remove it from both the timeline and the canvas
 
 Click **Export Code** to see generated HTML/CSS/JS. When audio is present, downloads 4 files (including the original audio). The exported code includes a click-to-start overlay for browser autoplay policy compliance, and audio sync with GSAP's `onUpdate` callback using the trim region mapping.
 
-### Shape Rendering, Coordinate Translation, Path Export, Z-Index Animation, and Easing Mapping
+---
+
+## How the Export Works
 
 ### Color Animation in Exports
 
@@ -477,10 +480,6 @@ When a canvas background image is set, it is embedded directly in the exported C
 ### Audio Export Strategy
 
 The audio file is exported as a separate binary file using the original `ArrayBuffer` — no transcoding, no quality loss. The generated JS includes `AUDIO_REGION_START`/`END` constants, an `animToAudioTime()` mapping function, GSAP `onUpdate` drift correction, and `onRepeat`/`onComplete` callbacks.
-
-### Shape Rendering, Coordinate Translation, Path Export, Z-Index Animation, and Easing Mapping
-
-These work identically to the base version — see the sections below for full details.
 
 ### Shape Rendering Strategy
 
@@ -545,7 +544,7 @@ Web Audio API decodes a copy of the ArrayBuffer (`.slice(0)`) into PCM samples. 
 audioTime = region.start + (animationTime / animationDuration) × (region.end - region.start)
 ```
 
-Drift correction resyncs audio if it drifts more than 150ms from expected position.
+Drift correction resyncs audio if it drifts more than 150ms from expected position. The waveform track offers two views: **Full Audio** (entire waveform with draggable trim handles and region sliding) and **Sync** (trimmed region stretched to fill the full timeline width, providing zoomed-in visual alignment with the animation).
 
 ### Bitmap-to-Vector Conversion
 
@@ -553,13 +552,15 @@ Drift correction resyncs audio if it drifts more than 150ms from expected positi
 
 ### Drawing Tool, Flood Fill, and Shape Definitions
 
-These work identically to the base version — quadratic Bézier smoothing for drawings, scanline flood fill for paint bucket, and the `shapeDefinitions.js` single source of truth for all 12 shapes.
+Quadratic Bézier smoothing for freehand drawings, scanline flood fill for the paint bucket tool, and `shapeDefinitions.js` as the single source of truth for all 12 shape types (SVG paths, default colors, Fabric.js creation functions, and render mode).
 
 ---
 
 ## Known Limitations
 
-- **No undo/redo** system is implemented yet.
+- **No global undo/redo** in the main editor. The PathDeformModal and VectorEditModal have local undo within their dialogs, but the main canvas and timeline have no undo system.
+- **No project persistence** — refreshing or closing the browser loses all work. There is no save/load mechanism yet.
+- **Text editing is dialog-based** — double-clicking a text object opens a dialog overlay rather than editing directly inline on the canvas.
 - **Grouped objects** animate as a single unit (no independent child animations).
 - **Paint bucket fills** are raster-based (PNG) — may pixelate at large scales.
 - **Image export (bitmap mode)** embeds full base64 data URLs in JS, making exports large for high-res images.
@@ -573,17 +574,17 @@ These work identically to the base version — quadratic Bézier smoothing for d
 
 ## Future Improvements
 
-- Undo / Redo system
+- Global undo / redo system for the main editor
 - Independent child animations within groups
-- Non-uniform scale in exports
-- Save / Load project files (JSON export)
+- Save / Load project files (JSON export/import) with auto-save
 - Multiple canvases / scenes
 - Onion skinning for frame-by-frame animation
 - Keyframe curve editor (visual bezier easing)
-- Audio waveform zoom and pan for precise trimming
 - Multi-track audio support
 - Video export (render to MP4)
-- Inline text editing directly on canvas
+- True inline text editing directly on the canvas (currently uses a dialog overlay)
+- Timeline snap-to-grid and magnetic keyframe alignment
+- Responsive canvas scaling for different viewport sizes
 
 ---
 
