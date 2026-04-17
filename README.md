@@ -30,7 +30,7 @@
 
 ## What It Does
 
-TweenGen is a **visual keyframe animation editor** built entirely in the browser. It allows users to:
+TweenGen(Tween Generator) is a **visual keyframe animation editor** built entirely in the browser. It allows users to:
 
 1. **Create objects** on a canvas — rectangles, circles, ellipses, rounded rectangles, triangles, diamonds, pentagons, hexagons, stars, arrows, hearts, crosses, text, freehand drawings, and uploaded images.
 2. **Set keyframes** at specific points on a timeline to define position, scale, rotation, opacity, fill color, and z-order.
